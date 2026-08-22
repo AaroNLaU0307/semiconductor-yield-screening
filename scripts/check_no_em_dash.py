@@ -5,11 +5,20 @@ en dash character (U+2013) anywhere in tracked source files, including code,
 comments, docstrings, YAML, and markdown. Use a comma, colon, semicolon, full
 stop, or parentheses instead. Plain ASCII hyphen-minus is fine.
 
+The scan is deliberately wider than that rule: it rejects **any** non-ASCII
+character. That subsumes the em dash rule and also catches its near misses, which
+turned out to be a real problem rather than a hypothetical one. A U+2212 minus sign
+is visually identical to a hyphen and silently stops being a number the moment
+anyone copies it into code; two of them reached this repository's README before
+this check was widened. Curly quotes fail the same way. If a genuine non-ASCII
+character is ever needed, add it to ALLOWED_NON_ASCII rather than weakening
+the scan.
+
 This script walks the repository tree, starting from its own location's
 parent directory (the repository root), and fails with exit code 1 if it
-finds either forbidden character in any scanned file. It is invoked by the
-CI workflow on every push and pull request, so a violation is caught
-automatically rather than relying on manual review.
+finds a violation in any scanned file. It is invoked by the CI workflow on
+every push and pull request, so a violation is caught automatically rather
+than relying on manual review.
 
 Usage:
     python scripts/check_no_em_dash.py
@@ -19,11 +28,16 @@ from __future__ import annotations
 
 import os
 import sys
+import unicodedata
 from pathlib import Path
 
 EM_DASH = chr(0x2014)
 EN_DASH = chr(0x2013)
 FORBIDDEN_CHARACTERS = (EM_DASH, EN_DASH)
+
+#: Non-ASCII characters that are nonetheless permitted. Empty by design: the
+#: repository is pure ASCII today, and keeping it that way is free.
+ALLOWED_NON_ASCII: set[str] = set()
 
 SCANNED_EXTENSIONS = {
     ".py",
@@ -44,6 +58,20 @@ SCANNED_EXTENSIONLESS_NAMES = {
     ".gitignore",
     ".gitattributes",
 }
+
+# Generated files that embed third party code. `dashboard/index.html` inlines the
+# whole plotly.js bundle, which legitimately contains CJK characters and a micro sign
+# inside its locale and unit handling. Policing a vendored library's internals is not
+# what this rule is for. Nothing is lost by skipping it: every word of prose in that
+# page comes from `scripts/build_dashboard.py`, which IS scanned, so the project's own
+# text is still guarded at its source.
+SKIPPED_RELATIVE_PATHS = {
+    Path("dashboard") / "index.html",
+}
+
+#: Longest offending line printed. A minified bundle on one line would otherwise
+#: flood the console and bury the actual violations.
+MAX_REPORTED_LINE_LENGTH = 120
 
 SKIPPED_DIR_NAMES = {
     ".git",
@@ -75,6 +103,8 @@ def iter_scanned_files(repo_root: Path):
         dirnames[:] = sorted(d for d in dirnames if d not in SKIPPED_DIR_NAMES)
         for filename in sorted(filenames):
             file_path = Path(dirpath) / filename
+            if file_path.relative_to(repo_root) in SKIPPED_RELATIVE_PATHS:
+                continue
             if (
                 file_path.suffix in SCANNED_EXTENSIONS
                 or file_path.name in SCANNED_EXTENSIONLESS_NAMES
@@ -82,23 +112,58 @@ def iter_scanned_files(repo_root: Path):
                 yield file_path
 
 
-def find_violations(file_path: Path) -> list[tuple[int, str]]:
-    """Return a list of (line_number, stripped_line_text) pairs for a file.
+def describe_character(character: str) -> str:
+    """Name a character for the violation message."""
+    if character == EM_DASH:
+        return "em dash"
+    if character == EN_DASH:
+        return "en dash"
+    try:
+        return unicodedata.name(character).lower()
+    except ValueError:
+        return "unnamed character"
 
-    Only lines containing at least one forbidden character are included.
-    The file is read as UTF-8 with decoding errors replaced rather than
-    raised, so a stray non-UTF-8 byte cannot crash the scan.
+
+def find_violations(file_path: Path) -> list[tuple[int, str, str]]:
+    """Return (line_number, reason, stripped_line_text) triples for a file.
+
+    Two rules are enforced. The em dash and en dash are forbidden outright by
+    non-negotiable 1 of this project. Every other non-ASCII character is also
+    rejected, which subsumes that rule and catches the near misses that motivated
+    it: a U+2212 minus sign inside a number looks identical to a hyphen and stops
+    being a number the moment anyone copies it into code, and curly quotes break
+    the same way. If a genuine non-ASCII character is ever needed, add it to
+    ALLOWED_NON_ASCII rather than weakening the scan.
+
+    The file is read as UTF-8 with decoding errors replaced rather than raised, so
+    a stray non-UTF-8 byte cannot crash the scan.
     """
-    violations: list[tuple[int, str]] = []
+    violations: list[tuple[int, str, str]] = []
     text = file_path.read_text(encoding="utf-8", errors="replace")
     for line_number, line in enumerate(text.splitlines(), start=1):
-        if any(character in line for character in FORBIDDEN_CHARACTERS):
-            violations.append((line_number, line.strip()))
+        offenders = {
+            character
+            for character in line
+            if ord(character) > 127 and character not in ALLOWED_NON_ASCII
+        }
+        if not offenders:
+            continue
+        named = ", ".join(
+            f"U+{ord(c):04X} {describe_character(c)}" for c in sorted(offenders)
+        )
+        # The offending line contains, by definition, characters the console may not
+        # be able to encode. A Windows cp1252 stdout raises UnicodeEncodeError on
+        # U+2212, so the guard would crash instead of reporting. Escaping to ASCII
+        # keeps the output printable everywhere and shows the culprit explicitly.
+        safe = line.strip().encode("ascii", "backslashreplace").decode("ascii")
+        if len(safe) > MAX_REPORTED_LINE_LENGTH:
+            safe = safe[:MAX_REPORTED_LINE_LENGTH] + " ... (line truncated)"
+        violations.append((line_number, named, safe))
     return violations
 
 
 def main() -> int:
-    """Scan the repository for em dash or en dash violations.
+    """Scan the repository for em dashes and any other non-ASCII character.
 
     Prints one line per offending source line and returns 1 if any are
     found, otherwise prints a summary line and returns 0.
@@ -110,14 +175,19 @@ def main() -> int:
     for file_path in iter_scanned_files(repo_root):
         files_scanned += 1
         relative_path = file_path.relative_to(repo_root)
-        for line_number, line_text in find_violations(file_path):
+        for line_number, reason, line_text in find_violations(file_path):
             found_violation = True
-            print(f"{relative_path}:{line_number}: {line_text}")
+            print(f"{relative_path}:{line_number}: [{reason}] {line_text}")
 
     if found_violation:
+        print(
+            "\nNon-negotiable 1 forbids the em dash. This check rejects every "
+            "non-ASCII character, which subsumes it. Use a comma, colon, semicolon, "
+            "full stop, or parentheses, and a plain ASCII hyphen for a minus sign."
+        )
         return 1
 
-    print(f"no em dash or en dash found in {files_scanned} files scanned")
+    print(f"no em dash and no non-ASCII character found in {files_scanned} files scanned")
     return 0
 
 

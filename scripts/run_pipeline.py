@@ -18,6 +18,7 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+from scipy import stats
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT))
@@ -600,9 +601,19 @@ def write_spc_report(sensors, per_sensor, contingency, sweep, y_holdout) -> None
                 ("in control records", contingency.n_clean),
                 ("failure rate when out of control", f"{contingency.risk_ooc:.4f}"),
                 ("failure rate when in control", f"{contingency.risk_clean:.4f}"),
-                ("risk ratio", f"{contingency.risk_ratio:.3f}"),
+                (
+                    "risk ratio",
+                    f"{contingency.risk_ratio:.3f}"
+                    if np.isfinite(contingency.risk_ratio)
+                    else "not estimable, a cell is zero",
+                ),
                 ("risk ratio 95 percent interval", ci_text),
-                ("odds ratio", f"{contingency.odds_ratio:.3f}"),
+                (
+                    "odds ratio",
+                    f"{contingency.odds_ratio:.3f}"
+                    if np.isfinite(contingency.odds_ratio)
+                    else "not estimable, a cell is zero",
+                ),
                 ("Fisher exact two sided p", fmt_p(contingency.p_value)),
             ]
         ),
@@ -957,6 +968,212 @@ def write_model_report(
     (REPORTS / "model.md").write_text("\n".join(parts), encoding="utf-8")
 
 
+def phase_5_replication(
+    X_train: pd.DataFrame,
+    y_train: np.ndarray,
+    X_holdout: pd.DataFrame,
+    y_holdout: np.ndarray,
+    screen,
+):
+    """Post-hoc: do the shortlisted associations reappear in the holdout period?
+
+    **This analysis was not pre-declared.** It was added after the model failed to
+    transfer, to answer why, and it is labelled post-hoc everywhere it appears. It
+    changes no frozen quantity and it reuses the holdout that DECISIONS.md D12
+    already released for model evaluation, rather than opening anything new.
+
+    Three quantities per shortlisted feature: its train effect size, the same effect
+    size recomputed on holdout, and its label blind Spearman correlation with time on
+    train. The third is the candidate explanation for the first two disagreeing.
+    """
+    shortlist = list(screen.shortlist["feature"])
+    holdout_screen = mannwhitney_screen(X_holdout[shortlist], y_holdout)
+
+    train_by_feature = screen.table.set_index("feature")
+    holdout_by_feature = holdout_screen.table.set_index("feature")
+    time_index = np.arange(len(X_train), dtype=float)
+
+    rows = []
+    for feature in shortlist:
+        rho = stats.spearmanr(time_index, X_train[feature].to_numpy()).statistic
+        rows.append(
+            {
+                "feature": feature,
+                "train effect": float(
+                    train_by_feature.loc[feature, "effect_size_rank_biserial"]
+                ),
+                "holdout effect": float(
+                    holdout_by_feature.loc[feature, "effect_size_rank_biserial"]
+                ),
+                "holdout raw p": float(holdout_by_feature.loc[feature, "p_raw"]),
+                "time correlation on train": float(rho),
+            }
+        )
+    table = pd.DataFrame(rows)
+
+    # BH across the 32 holdout tests, so "it replicated" is not an uncorrected claim.
+    survives, adjusted = benjamini_hochberg(
+        table["holdout raw p"].to_numpy(), config.FDR_Q
+    )
+    table["holdout BH adjusted p"] = adjusted
+    table["replicates"] = survives
+
+    same_sign = int(
+        (np.sign(table["train effect"]) == np.sign(table["holdout effect"])).sum()
+    )
+    stats_summary = {
+        "n_shortlisted": len(table),
+        "same_sign": same_sign,
+        "expected_same_sign_by_chance": len(table) / 2.0,
+        "effect_correlation": float(
+            table["train effect"].corr(table["holdout effect"])
+        ),
+        "median_abs_train_effect": float(table["train effect"].abs().median()),
+        "median_abs_holdout_effect": float(table["holdout effect"].abs().median()),
+        "n_replicating": int(survives.sum()),
+        "n_strong_time_trend": int((table["time correlation on train"].abs() > 0.3).sum()),
+        "median_abs_time_correlation": float(
+            table["time correlation on train"].abs().median()
+        ),
+    }
+    write_replication_report(table, stats_summary)
+    return table, stats_summary
+
+
+def write_replication_report(table: pd.DataFrame, summary: dict) -> None:
+    replicating = table[table["replicates"]].sort_values(
+        "holdout BH adjusted p", kind="stable"
+    )
+    shrinkage = 1 - summary["median_abs_holdout_effect"] / summary["median_abs_train_effect"]
+
+    display = table.sort_values("train effect", key=abs, ascending=False, kind="stable")
+    display = display[
+        [
+            "feature",
+            "train effect",
+            "holdout effect",
+            "holdout raw p",
+            "holdout BH adjusted p",
+            "replicates",
+            "time correlation on train",
+        ]
+    ]
+
+    if len(replicating):
+        replication_line = (
+            f"**{summary['n_replicating']} of {summary['n_shortlisted']} shortlisted "
+            "features do replicate on the holdout period under the same BH control at "
+            f"q = {config.FDR_Q}:** "
+            # Named access, not itertuples positions: the column names contain spaces,
+            # so positional access silently reads the wrong column.
+            + ", ".join(
+                f"`{row['feature']}` (train {row['train effect']:+.3f}, holdout "
+                f"{row['holdout effect']:+.3f}, adjusted p "
+                f"{fmt_p(row['holdout BH adjusted p'])})"
+                for _, row in replicating.iterrows()
+            )
+            + ". These are the candidates a process engineer should look at first, "
+            "because they are the only ones that survived a change of time period."
+        )
+    else:
+        replication_line = (
+            "**No shortlisted feature replicated on the holdout period** under BH "
+            f"control at q = {config.FDR_Q}."
+        )
+
+    parts = [
+        "# Replication and drift: why the associations did not transfer\n",
+        "**This analysis is post-hoc.** It was not declared at Gate 1. It was added "
+        "after the predictive model failed to transfer to the holdout, in order to "
+        "explain why. It changes no frozen quantity, and it reuses the holdout that "
+        "DECISIONS.md D12 already released for model evaluation rather than opening "
+        "anything new. Read everything here as a hypothesis generated by the data, "
+        "not as a confirmed result.\n",
+        "## 1. The question\n",
+        f"The screen found {summary['n_shortlisted']} features associated with failure "
+        "in the train period, and the permutation null said that count was not chance "
+        "(p = 0.0005). The model built on those features then failed to beat no skill "
+        "on the holdout. Both statements are correct, and this page reconciles them.\n",
+        "## 2. The associations mostly do not reappear\n",
+        kv_table(
+            [
+                ("shortlisted features", summary["n_shortlisted"]),
+                (
+                    "keeping the same effect sign on holdout",
+                    f"{summary['same_sign']} of {summary['n_shortlisted']}",
+                ),
+                (
+                    "expected by chance if the sign were random",
+                    f"{summary['expected_same_sign_by_chance']:.0f}",
+                ),
+                (
+                    "correlation between train and holdout effect size",
+                    f"{summary['effect_correlation']:.3f}",
+                ),
+                (
+                    "median absolute effect, train",
+                    f"{summary['median_abs_train_effect']:.4f}",
+                ),
+                (
+                    "median absolute effect, holdout",
+                    f"{summary['median_abs_holdout_effect']:.4f}",
+                ),
+                ("shrinkage in median absolute effect", f"{shrinkage:.1%}"),
+            ]
+        ),
+        f"\nThe sign agreement of {summary['same_sign']} out of "
+        f"{summary['n_shortlisted']} is what a coin would produce. The median absolute "
+        f"effect size falls by {shrinkage:.0%} across the boundary. Whatever the screen "
+        "measured in the train period, most of it is not present in the holdout "
+        "period.\n",
+        "\n## 3. But not all of it vanishes\n",
+        replication_line,
+        "\n\nTwo cautions on that. The count is small, and a post-hoc replication "
+        "check on a period already used for model evaluation is weaker evidence than "
+        "a pre-declared test on fresh data. Confirming these would need a third time "
+        "period that no part of this project has touched.\n",
+        "\n## 4. The candidate explanation: the sensors drift with time\n",
+        kv_table(
+            [
+                (
+                    "features with strong time trend on train, absolute Spearman above 0.3",
+                    f"{summary['n_strong_time_trend']} of {summary['n_shortlisted']}",
+                ),
+                (
+                    "median absolute correlation with time",
+                    f"{summary['median_abs_time_correlation']:.4f}",
+                ),
+            ]
+        ),
+        "\nThe failure rate itself moves by a factor of seven across the collection "
+        "window (DECISIONS.md D0). Many of the shortlisted sensors move steadily with "
+        "time as well. When two quantities both trend over a window, a univariate test "
+        "computed inside that window sees a strong association whether or not either "
+        "quantity has anything to do with the other. That is enough to produce a real, "
+        "reproducible, permutation-confirmed screen result that nonetheless carries no "
+        "predictive content in a later period.\n",
+        "\nThe clearest single case is the top ranked sensor. Its train effect is the "
+        "largest in the screen, its holdout effect is near zero, and its own monthly "
+        "mean falls steadily across the four months of the record, in the same "
+        "direction as the failure rate. Nothing about that pattern requires the sensor "
+        "to influence yield.\n",
+        "\n## 5. Full table\n",
+        "`time correlation on train` is the Spearman correlation between the feature "
+        "and record order, computed on train and without reference to the label.\n",
+        md_table(display),
+        "\n## 6. What this means for the project\n",
+        "The screen is not wrong, and the permutation null is not invalidated. Both "
+        "answer the question they were asked, which is whether the train period "
+        "contains more association than chance would produce. They were not asked "
+        "whether that association is stable over time, and it mostly is not.\n",
+        "\nThe practical consequence is that a screen of this kind should be paired "
+        "with a stability check across time blocks before its output is handed to an "
+        "engineer. DECISIONS.md A4 records this as the main thing that would be done "
+        "differently.\n",
+    ]
+    (REPORTS / "replication.md").write_text("\n".join(parts), encoding="utf-8")
+
+
 def write_timeline_data(timestamp: pd.Series, y: np.ndarray, split) -> None:
     """Failure rate over time with the train/holdout boundary, for dashboard panel 1.
 
@@ -1047,7 +1264,20 @@ def main() -> int:
         f"no-skill={primary.no_skill:.4f} ROC-AUC={primary.roc_auc:.4f} "
         f"recall@FPR{config.FALSE_ALARM_BUDGET_FPR}={primary.recall_at_budget:.4f}"
     )
-    print("wrote reports/screening.md, reports/spc.md, reports/model.md")
+    replication, repl_summary = phase_5_replication(
+        X_train, y_train, X_holdout, y_holdout, screen
+    )
+    print(
+        f"phase 5 (post-hoc): {repl_summary['same_sign']}/"
+        f"{repl_summary['n_shortlisted']} keep effect sign on holdout, "
+        f"{repl_summary['n_replicating']} replicate under BH, "
+        f"median |effect| {repl_summary['median_abs_train_effect']:.3f} -> "
+        f"{repl_summary['median_abs_holdout_effect']:.3f}"
+    )
+    print(
+        "wrote reports/screening.md, reports/spc.md, reports/model.md, "
+        "reports/replication.md"
+    )
     return 0
 
 

@@ -78,9 +78,9 @@ A holdout record is out of control if at least one applied rule fires on at leas
 | in control records | 3 |
 | failure rate when out of control | 0.0556 |
 | failure rate when in control | 0.0000 |
-| risk ratio | nan |
+| risk ratio | not estimable, a cell is zero |
 | risk ratio 95 percent interval | not estimable |
-| odds ratio | inf |
+| odds ratio | not estimable, a cell is zero |
 | Fisher exact two sided p | 1.0000 |
 
 Fisher's exact test rather than chi-square, because with 26 holdout failures the expected cell counts are small and the chi-square approximation is not trustworthy there.

@@ -9,11 +9,12 @@ frozen numeric threshold and is the authority when this file and it disagree.
 
 | phase | output | gate | status |
 | --- | --- | --- | --- |
-| 1. Load, QA, lock decisions | `reports/data_quality.md`, `DECISIONS.md` | Gate 1, Aaron approves | done, awaiting approval |
-| 2. Screening | `reports/screening.md` | none | not started |
-| 3. SPC | `reports/spc.md`, `dashboard/spc_data.json` | none | not started |
-| 4. Predictive baseline | `reports/model.md` | none | not started |
-| 5. Dashboard and wrap | `dashboard/index.html`, `README.md`, CI | Gate 2, Aaron reviews findings | not started |
+| 1. Load, QA, lock decisions | `reports/data_quality.md`, `DECISIONS.md` | Gate 1, Aaron approves | done, approved |
+| 2. Screening | `reports/screening.md` | none | done |
+| 3. SPC | `reports/spc.md`, `dashboard/spc_data.json` | none | done |
+| 4. Predictive baseline | `reports/model.md` | none | done |
+| 5. Dashboard and wrap | `dashboard/index.html`, `README.md`, CI | Gate 2, Aaron reviews findings | done, awaiting review |
+| 5b. Replication and drift (post-hoc, unplanned) | `reports/replication.md` | none | done |
 
 ## Module layout
 
