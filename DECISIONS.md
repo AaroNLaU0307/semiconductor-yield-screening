@@ -12,6 +12,10 @@ holdout record influences the design.
 Constants named here are implemented once in `yield_screening/config.py` and imported
 everywhere. If a number appears in code but not in this file, that is a defect.
 
+**Status: FROZEN at Gate 1, approved by the owner (Aaron Lau Chiong Wen).** Every value
+below was fixed before any screening, SPC or modelling code was written, and before any
+holdout record was read. Per D12 none of it may change on the basis of a result.
+
 ---
 
 ## D0. Dataset as measured
