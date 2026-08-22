@@ -1,0 +1,65 @@
+# PLAN
+
+Execution plan for `semiconductor-yield-screening`. Written once. Referenced, not restated.
+
+Scope, standard, and constraints live in the project brief. `DECISIONS.md` holds every
+frozen numeric threshold and is the authority when this file and it disagree.
+
+## Phase status
+
+| phase | output | gate | status |
+| --- | --- | --- | --- |
+| 1. Load, QA, lock decisions | `reports/data_quality.md`, `DECISIONS.md` | Gate 1, Aaron approves | done, awaiting approval |
+| 2. Screening | `reports/screening.md` | none | not started |
+| 3. SPC | `reports/spc.md`, `dashboard/spc_data.json` | none | not started |
+| 4. Predictive baseline | `reports/model.md` | none | not started |
+| 5. Dashboard and wrap | `dashboard/index.html`, `README.md`, CI | Gate 2, Aaron reviews findings | not started |
+
+## Module layout
+
+```
+yield_screening/
+  data_io.py      load and parse raw SECOM, sort by timestamp, verify checksums
+  config.py       every frozen constant from DECISIONS.md, single source of truth
+  splitting.py    chronological split
+  preprocess.py   train-fitted column filter, median imputation, missingness indicators
+  screening.py    Mann-Whitney U, rank-biserial effect size, BH-FDR, permutation null
+  spc.py          I-MR control limits, Nelson rules, contingency test
+  modeling.py     baselines, HistGradientBoosting, L2 logistic, PR-AUC, cost sweep
+  reporting.py    markdown emitters
+scripts/
+  run_data_qa.py        phase 1
+  run_pipeline.py       the one command, phases 2 to 5
+  check_no_em_dash.py   CI guard for non-negotiable 1
+tests/                  four required tests, written in the phase that produces the code
+```
+
+## Command surface
+
+One command reproduces everything after QA:
+
+```
+python scripts/run_pipeline.py
+```
+
+## Test schedule
+
+Tests are written in the phase that produces the code they cover, not deferred.
+
+| test | covers | written in |
+| --- | --- | --- |
+| temporal ordering | every holdout timestamp is later than every train timestamp | phase 2 |
+| fit scope | perturbing a holdout row cannot change a fitted transform parameter | phase 2 |
+| screening recovers planted signal, and holds its FDR bound on pure noise | phase 2 |
+| seed determinism | same seed, same run, same reported metrics | phase 4 |
+
+Supporting test, not in the required four but cheap and load bearing: the vectorised
+permutation screen must agree with `scipy.stats.mannwhitneyu` to floating point
+tolerance on a sample of columns. The permutation null is worthless if the fast path
+computes a different statistic from the reference path.
+
+## Cut order if behind
+
+DOE proposal, then the second model (L2 logistic), then the SPC contingency test.
+The Dash server version is already cut by owner decision. Anything cut is recorded
+as cut for time in `README.md`.
