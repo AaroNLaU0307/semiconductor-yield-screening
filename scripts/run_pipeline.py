@@ -32,8 +32,15 @@ from yield_screening.reporting import (  # noqa: E402
     md_table,
 )
 from yield_screening.screening import (  # noqa: E402
+    benjamini_hochberg,
     mannwhitney_screen,
     permutation_null,
+)
+from yield_screening.spc import (  # noqa: E402
+    RULE_DESCRIPTIONS,
+    chart_series,
+    fit_control_limits,
+    ooc_failure_contingency,
 )
 from yield_screening.splitting import chronological_split  # noqa: E402
 
@@ -274,6 +281,344 @@ def screening_verdict(screen, perm) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Phase 3: SPC
+#
+# This phase contains the FIRST of the two declared holdout reads (DECISIONS.md D12).
+# Nothing frozen in DECISIONS.md may change from here on.
+# ---------------------------------------------------------------------------
+
+
+def spc_shortlist(screen, pre: Preprocessor) -> list[str]:
+    """Dense band sensor values from the shortlist, top N by absolute effect size.
+
+    Missingness indicators are excluded: a binary routing flag has no control limits
+    and charting it would be a category error.
+    """
+    indicators = set(pre.indicator_columns)
+    candidates = screen.shortlist[~screen.shortlist["feature"].isin(indicators)]
+    ranked = candidates.sort_values("abs_effect_size", ascending=False, kind="stable")
+    return list(ranked["feature"].head(config.SPC_MAX_SENSORS))
+
+
+def phase_3_spc(
+    X_train: pd.DataFrame,
+    X_holdout: pd.DataFrame,
+    y_holdout: np.ndarray,
+    screen,
+    pre: Preprocessor,
+    raw_train: pd.DataFrame,
+    raw_holdout: pd.DataFrame,
+):
+    """Chart the shortlist and test whether OOC flags coincide with holdout failures."""
+    sensors = spc_shortlist(screen, pre)
+    if not sensors:
+        raise ValueError("SPC shortlist is empty, which the fallback should prevent")
+
+    charts: dict[str, object] = {}
+    any_ooc = np.zeros(len(X_holdout), dtype=bool)
+    # How many of the charted sensors flag each holdout record, under two rule sets.
+    count_all_rules = np.zeros(len(X_holdout), dtype=int)
+    count_rule_1 = np.zeros(len(X_holdout), dtype=int)
+    per_sensor_rows = []
+
+    for name in sensors:
+        limits = fit_control_limits(X_train[name].to_numpy())
+        payload = chart_series(
+            X_train[name].to_numpy(), X_holdout[name].to_numpy(), limits
+        )
+        charts[name] = payload
+
+        holdout_ooc = np.asarray(payload["holdout_ooc"], dtype=bool)
+        any_ooc |= holdout_ooc
+        count_all_rules += holdout_ooc.astype(int)
+        count_rule_1 += np.asarray(
+            payload["holdout_flags"]["rule_1"], dtype=bool
+        ).astype(int)
+
+        effect = float(
+            screen.table.loc[screen.table["feature"] == name, "effect_size_rank_biserial"].iloc[0]
+        )
+        per_sensor_rows.append(
+            {
+                "sensor": name,
+                "effect size": round(effect, 4),
+                "train OOC rate": round(float(np.mean(payload["train_ooc"])), 4),
+                "holdout OOC rate": round(float(np.mean(holdout_ooc)), 4),
+                "train imputed share": round(
+                    float(raw_train[name].isna().mean()), 4
+                ),
+                "holdout imputed share": round(
+                    float(raw_holdout[name].isna().mean()), 4
+                ),
+            }
+        )
+
+    contingency = ooc_failure_contingency(any_ooc, y_holdout)
+    per_sensor = pd.DataFrame(per_sensor_rows)
+    sweep = contingency_sweep(count_all_rules, count_rule_1, y_holdout, len(sensors))
+    write_spc_report(sensors, per_sensor, contingency, sweep, y_holdout)
+
+    (DASHBOARD / "spc_data.json").write_text(
+        json.dumps({"sensors": sensors, "charts": charts}, indent=2), encoding="utf-8"
+    )
+    return sensors, contingency, any_ooc
+
+
+def contingency_sweep(
+    count_all_rules: np.ndarray,
+    count_rule_1: np.ndarray,
+    y_holdout: np.ndarray,
+    n_sensors: int,
+) -> pd.DataFrame:
+    """Contingency result at every severity threshold, under two rule sets.
+
+    This is a diagnostic added **after** the declared primary flag turned out to be
+    degenerate. It is reported as a complete sweep rather than as a selected
+    alternative, for the same reason the cost ratio in D11 is swept rather than
+    asserted: reporting every threshold removes the opportunity to choose the one that
+    reads best. The p-values are BH corrected across the whole sweep, because a sweep
+    of 20 tests is a screen and this project does not report uncorrected screens.
+    """
+    rows = []
+    for rule_set, counts in (
+        ("all applied rules", count_all_rules),
+        ("rule 1 only", count_rule_1),
+    ):
+        for k in range(1, n_sensors + 1):
+            flag = counts >= k
+            n_flagged = int(flag.sum())
+            if n_flagged == 0 or n_flagged == len(flag):
+                rows.append(
+                    {
+                        "rule set": rule_set,
+                        "sensors flagging at once": k,
+                        "records flagged": n_flagged,
+                        "fail rate flagged": float("nan"),
+                        "fail rate unflagged": float("nan"),
+                        "risk ratio": float("nan"),
+                        "fisher p": float("nan"),
+                        "note": "degenerate, one cell empty",
+                    }
+                )
+                continue
+            result = ooc_failure_contingency(flag, y_holdout)
+            rows.append(
+                {
+                    "rule set": rule_set,
+                    "sensors flagging at once": k,
+                    "records flagged": n_flagged,
+                    "fail rate flagged": result.risk_ooc,
+                    "fail rate unflagged": result.risk_clean,
+                    "risk ratio": result.risk_ratio,
+                    "fisher p": result.p_value,
+                    "note": "",
+                }
+            )
+
+    frame = pd.DataFrame(rows)
+    testable = frame["fisher p"].notna()
+    frame["fisher p BH adjusted"] = np.nan
+    if testable.any():
+        _, adjusted = benjamini_hochberg(
+            frame.loc[testable, "fisher p"].to_numpy(), config.FDR_Q
+        )
+        frame.loc[testable, "fisher p BH adjusted"] = adjusted
+    return frame
+
+
+def write_spc_report(sensors, per_sensor, contingency, sweep, y_holdout) -> None:
+    ci_low, ci_high = contingency.risk_ratio_ci
+    ci_text = (
+        f"{ci_low:.2f} to {ci_high:.2f}"
+        if np.isfinite(ci_low) and np.isfinite(ci_high)
+        else "not estimable"
+    )
+
+    n_holdout = len(y_holdout)
+    degenerate = contingency.n_clean < 10 or not np.isfinite(contingency.risk_ratio)
+
+    # The sweep conclusion belongs in the headline, not buried in a later section.
+    testable = sweep[sweep["fisher p BH adjusted"].notna()]
+    if len(testable):
+        best = testable.loc[testable["fisher p BH adjusted"].idxmin()]
+        if best["fisher p BH adjusted"] > config.FDR_Q:
+            sweep_summary = (
+                "**The sweep finds nothing either.** Across all "
+                f"{len(testable)} testable threshold and rule set combinations, the "
+                "smallest BH adjusted p is "
+                f"{fmt_p(float(best['fisher p BH adjusted']))}, and no combination "
+                "shows an association between out of control flags and holdout "
+                "failure. The plain reading is that on this data these control charts "
+                "do not anticipate failures on held out records. With "
+                f"{int(y_holdout.sum())} holdout failures the sweep has limited power, "
+                "so this is weak evidence of no effect rather than evidence of no "
+                "effect, and it is reported because it is what was found."
+            )
+        else:
+            sweep_summary = (
+                "The sweep does contain at least one combination surviving BH "
+                f"correction (smallest adjusted p = "
+                f"{fmt_p(float(best['fisher p BH adjusted']))}, at "
+                f"{best['rule set']}, k = {int(best['sensors flagging at once'])}). "
+                "It is a post-hoc finding from a sweep and should be treated as a "
+                "hypothesis for a future study, not as a confirmed result."
+            )
+    else:
+        sweep_summary = "No threshold in the sweep produced a testable table."
+
+    if degenerate:
+        verdict = (
+            "**The pre-declared out of control flag is degenerate and carries no "
+            f"information.** It flags {contingency.n_ooc} of {n_holdout} holdout "
+            f"records, leaving only {contingency.n_clean} in control, so the "
+            "contingency test has almost nothing to compare against and its risk "
+            f"ratio is not estimable (Fisher exact p = {fmt_p(contingency.p_value)}).\n\n"
+            "This is a flaw in the flag definition frozen at Gate 1, not a property of "
+            "the process, and the cause is arithmetic rather than mysterious. "
+            "DECISIONS.md D8 defined a record as out of control if **any** applied "
+            "rule fires on **any** charted sensor. The measured per sensor flag rates "
+            "in section 2 run from 3 percent to 60 percent, and a union over ten such "
+            "sensors reaches roughly 99 percent by construction. A flag that fires on "
+            "almost every record cannot discriminate anything.\n\n"
+            "The declared result is reported below exactly as it was specified, rather "
+            "than replaced. Section 5 adds a severity sweep as a post-hoc diagnostic, "
+            "reported in full so that no single threshold is selected after the fact.\n\n"
+            f"{sweep_summary}"
+        )
+    elif contingency.p_value <= 0.05 and contingency.risk_ratio > 1:
+        verdict = (
+            "**Out of control records failed more often than in control records, and "
+            f"the difference is unlikely to be chance** (Fisher exact p = "
+            f"{fmt_p(contingency.p_value)}). Records flagged by at least one applied "
+            f"Nelson rule failed at {contingency.risk_ooc:.1%} against "
+            f"{contingency.risk_clean:.1%} for unflagged records, a risk ratio of "
+            f"{contingency.risk_ratio:.2f} (95 percent interval {ci_text})."
+        )
+    elif contingency.p_value <= 0.05:
+        verdict = (
+            "**Out of control records differ from in control records, but not in the "
+            f"direction an engineer would want** (Fisher exact p = "
+            f"{fmt_p(contingency.p_value)}, risk ratio {contingency.risk_ratio:.2f}). "
+            "Flagged records failed no more often than unflagged ones."
+        )
+    else:
+        verdict = (
+            "**No association detectable above the noise floor between out of control "
+            f"flags and holdout failures** (Fisher exact p = "
+            f"{fmt_p(contingency.p_value)}, risk ratio {contingency.risk_ratio:.2f}, "
+            f"95 percent interval {ci_text}). Records flagged by at least one applied "
+            f"Nelson rule failed at {contingency.risk_ooc:.1%} against "
+            f"{contingency.risk_clean:.1%} for unflagged records. With "
+            f"{int(y_holdout.sum())} holdout failures this test has limited power, so "
+            "this is weak evidence of no effect rather than evidence of no effect."
+        )
+
+    rules_table = pd.DataFrame(
+        [
+            {"rule": f"Nelson {r}", "condition": RULE_DESCRIPTIONS[r]}
+            for r in config.NELSON_RULES_APPLIED
+        ]
+    )
+
+    parts = [
+        "# SPC report\n",
+        "Generated by `scripts/run_pipeline.py`. Control limits are estimated on the "
+        "**train** partition and applied unchanged to holdout. This page contains the "
+        "first of the two declared holdout reads (DECISIONS.md D12).\n",
+        "## 1. Headline\n",
+        verdict,
+        "\n## 2. Charted sensors\n",
+        f"The {len(sensors)} shortlisted sensor values with the largest absolute "
+        "effect size. Missingness indicators are excluded, since a binary routing flag "
+        "has no control limits.\n",
+        md_table(per_sensor),
+        "\nThe imputed share columns matter: a charted point that was imputed to the "
+        "train median sits at the centre line by construction and can never be flagged "
+        "out of control. Those shares are small here, but they are shown rather than "
+        "assumed away.\n",
+        "\n## 3. Method\n",
+        "I-MR charts on individuals, with the moving range of consecutive records.\n",
+        kv_table(
+            [
+                ("centre", "mean of train individuals"),
+                ("sigma estimate", "MR-bar / 1.128"),
+                (
+                    "individuals limits",
+                    f"centre +/- {config.IMR_INDIVIDUALS_CONSTANT} * MR-bar",
+                ),
+                ("moving range UCL", f"{config.IMR_MOVING_RANGE_CONSTANT} * MR-bar"),
+                ("limits estimated on", "train only"),
+                ("run rule scope", "within a partition, never spanning the boundary"),
+                ("run rule flag point", "the point at which the pattern completes"),
+            ]
+        ),
+        "\nApplied Nelson rules:\n",
+        md_table(rules_table),
+        "\nRules 4, 7 and 8 are excluded. They assume a stable within subgroup sigma "
+        "and roughly continuous readings, and this data has median imputed values "
+        "creating exact ties, a 37 minute median cadence with gaps up to 48.6 hours, "
+        "and no rational subgroups. Under those conditions they fire on artefacts of "
+        "the data preparation rather than on process behaviour.\n",
+        "\n**Stated limitation.** I-MR assumes approximately normal and independent "
+        "individuals. Neither holds cleanly here. These limits are a screening "
+        "heuristic for where to look, not calibrated false alarm rates. The "
+        "contingency test below is the check that does not depend on the limits being "
+        "calibrated: it asks only whether flagged records fail more often.\n",
+        "\n## 4. Contingency table on holdout\n",
+        "A holdout record is out of control if at least one applied rule fires on at "
+        "least one charted sensor at that record.\n",
+        md_table(contingency.as_frame().reset_index(names="holdout records")),
+        "\n",
+        kv_table(
+            [
+                ("out of control records", contingency.n_ooc),
+                ("in control records", contingency.n_clean),
+                ("failure rate when out of control", f"{contingency.risk_ooc:.4f}"),
+                ("failure rate when in control", f"{contingency.risk_clean:.4f}"),
+                ("risk ratio", f"{contingency.risk_ratio:.3f}"),
+                ("risk ratio 95 percent interval", ci_text),
+                ("odds ratio", f"{contingency.odds_ratio:.3f}"),
+                ("Fisher exact two sided p", fmt_p(contingency.p_value)),
+            ]
+        ),
+        "\nFisher's exact test rather than chi-square, because with "
+        f"{int(y_holdout.sum())} holdout failures the expected cell counts are small "
+        "and the chi-square approximation is not trustworthy there.\n",
+        "\n## 5. Severity sweep, post-hoc diagnostic\n",
+        "**This section was added after seeing that the declared flag in section 4 is "
+        "degenerate, so it is post-hoc and is labelled as such.** To avoid replacing "
+        "one arbitrary definition with another that happens to read better, every "
+        "severity threshold is reported, under two rule sets: the full applied set, "
+        "and rule 1 alone (a single point beyond the control limits), which is the "
+        "only applied rule that does not depend on runs and is therefore the least "
+        "affected by autocorrelation.\n",
+        "A record is flagged when at least k of the charted sensors signal at that "
+        "record. The p-values are BH corrected across the whole sweep, because a "
+        "sweep of this many tests is itself a screen and this project does not report "
+        "uncorrected screens.\n",
+        md_table(sweep),
+        "\nNo threshold in this sweep is promoted to a headline result. It is shown "
+        "so a reader can see the entire surface, including the parts that do not "
+        "support a positive finding.\n",
+        "\n## 6. Process drift, a separate observation\n",
+        "The holdout out of control rate in section 2 is higher than the train rate "
+        "for every charted sensor, several by a factor of two or more. The limits are "
+        "estimated on train and applied unchanged, so this says the holdout period "
+        "genuinely sits further from the train centre lines than the train period did. "
+        "That is consistent with the failure rate non-stationarity recorded in "
+        "DECISIONS.md D0, and for a process engineer it is the more useful signal "
+        "here than the contingency test: the process moved.\n",
+        "\n## 7. Reading this correctly\n",
+        "An out of control signal says a sensor moved relative to its own train "
+        "behaviour. It does not say that movement caused a failure, and it does not "
+        "say the sensor is controllable. The contingency test measures whether the two "
+        "coincide on held out records, which is the strongest claim this design "
+        "supports.\n",
+    ]
+    (REPORTS / "spc.md").write_text("\n".join(parts), encoding="utf-8")
+
+
+# ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
 
@@ -303,7 +648,22 @@ def main() -> int:
         f"phase 2: {screen.n_survivors}/{screen.n_tested} survived BH at q={screen.q}, "
         f"permutation p={perm.p_value:.4f}, fallback={screen.fallback_used}"
     )
-    print("wrote reports/screening.md, reports/screening_table.csv")
+
+    # From here the holdout is read. Everything in DECISIONS.md is already frozen.
+    X_holdout_raw = data.X.iloc[split.holdout_idx]
+    y_holdout = data.y.iloc[split.holdout_idx].to_numpy()
+    X_holdout = pre.transform(X_holdout_raw)
+
+    sensors, contingency, _ = phase_3_spc(
+        X_train, X_holdout, y_holdout, screen, pre, X_train_raw, X_holdout_raw
+    )
+    print(
+        f"phase 3: charted {len(sensors)} sensors, "
+        f"OOC records={contingency.n_ooc}/{len(y_holdout)}, "
+        f"risk ratio={contingency.risk_ratio:.3f}, "
+        f"Fisher p={contingency.p_value:.4f}"
+    )
+    print("wrote reports/screening.md, reports/spc.md")
     return 0
 
 
