@@ -1,2 +1,8 @@
 * text=auto eol=lf
+
+# The raw dataset is verified by sha256 on load, so it must round trip through git
+# byte for byte. Any end of line normalisation would change the bytes and break
+# verify_checksums() on a fresh clone.
+data/raw/** -text
+
 *.png binary
