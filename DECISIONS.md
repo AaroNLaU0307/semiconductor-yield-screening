@@ -577,3 +577,105 @@ shortlisted sensor would improve yield if controlled. It will not establish that
 model would hold up on 2009 data or on another fab. And a null screen would not establish
 that no detractors exist, only that none is detectable at this sample size, at this
 effect size, through this preprocessing.
+
+---
+
+# Addendum, written after the results were known
+
+**Nothing in this addendum changes a frozen value.** Per D12 no quantity above may move
+on the basis of a result, and none has. This section records what the results taught,
+including where the frozen design turned out to be wrong, and consolidates the answers
+to the objections a reviewer is most likely to raise.
+
+## A1. A defect in D8, found by running it
+
+D8 defined a holdout record as out of control if **any** applied Nelson rule fires on
+**any** charted sensor. Executed, that flag marks **468 of 471** holdout records, leaves
+3 in control, and cannot discriminate anything. Its risk ratio is not estimable.
+
+The cause is arithmetic and should have been foreseen at Gate 1. The measured per sensor
+flag rates run from 3 percent to 60 percent, and a union over ten such sensors reaches
+roughly 99 percent by construction. The error was declaring a union without checking
+what a union over ten correlated series does.
+
+Handling: the declared result is reported exactly as specified in `reports/spc.md`
+rather than replaced, the defect is attributed to the declaration rather than to the
+data, and a severity sweep is reported in full as a labelled post-hoc diagnostic. The
+sweep reports every threshold under two rule sets, so that no single definition is
+selected after seeing which one reads best. It finds no association anywhere, smallest
+BH adjusted p = 1.000.
+
+What would have been wrong: quietly redefining the flag to rule 1 only, reporting the
+resulting p-value, and not mentioning that the original definition was tried first.
+
+## A2. What the permutation null does and does not establish
+
+**Does.** It establishes that the observed survivor count is not what testing 424
+correlated features against a label of this class balance produces by chance. The
+correlation structure among features is preserved exactly, since only labels are
+permuted, so the result does not depend on the dependence assumptions BH itself needs.
+Observed 32 against a null mean of 0.25 and a null maximum of 15 over 2000 permutations,
+permutation p = 0.0005.
+
+**Does not.** It says nothing about causation. It says nothing about whether the
+associations transfer to a later time period, and in this dataset they demonstrably do
+not: the same features underpin a holdout PR-AUC whose interval includes no skill. It
+does not validate the preprocessing, since the permutation reuses the same imputed
+matrix. And it does not establish that any individual survivor is real; it bounds how
+many of the 32 the family as a whole could be, not which ones.
+
+The joint reading of a decisive permutation null and a null holdout result is not a
+contradiction. It is evidence that the associations are **time local**, which the
+monthly failure rate in D0 and the elevated holdout out of control rates in
+`reports/spc.md` both independently support.
+
+## A3. Objections consolidated
+
+**Why chronological rather than random.** See D1. Two independent leaks are active
+here: tool state is autocorrelated, so a randomly held out record has near neighbours in
+train; and the failure rate itself moves by a factor of seven across the window, so a
+random fold averages regimes together. A random split does not give a slightly
+optimistic estimate of the right quantity, it gives an estimate of a different quantity.
+The holdout result in this project is the direct demonstration: performance that a
+random split would have reported does not survive an honest time boundary.
+
+**Why class weights rather than SMOTE.** See D9. SMOTE interpolates between minority
+neighbours in a 400 dimensional space where the minority class has 78 train members, so
+the synthetic points sit in regions no wafer occupies and their density is an artifact of
+the sampling scheme. On time ordered data it is worse, since synthesising a record from
+neighbours that straddle the split is leakage in its purest form. Class weighting changes
+the loss without inventing observations.
+
+**Why PR-AUC rather than accuracy.** See D10. Predicting pass for every lot scores 94.5
+percent accuracy on this holdout while catching zero of 26 failures. Accuracy is
+uninformative by construction at a 5.5 percent positive rate. ROC-AUC is better but still
+dominated by the true negative mass, staying flattering while precision is unusable, so
+it is reported and never headlined.
+
+**Why the shortlist is associational.** See D14. The data is observational, from a
+running fab, with no factor ever set deliberately. A shortlisted sensor may matter, may
+proxy something that matters, or may move with tool age or product mix. The permutation
+importance in `reports/model.md` makes the point concretely: it ranks `sensor_000`
+first, while the strongest univariate association, `sensor_059`, does not appear in the
+top eight. Correlated features and a weak model reshuffle importance freely, which is
+exactly why neither ranking can be read as a causal ordering.
+
+**Why the holdout numbers are so wide.** 26 failures. Stated in D1 as an accepted cost at
+the time the split was frozen, and reported as an interval everywhere the point estimate
+appears rather than being discovered afterwards.
+
+## A4. What would be done differently next time
+
+Three things, recorded because a portfolio artifact that claims no mistakes is less
+credible than one that names them.
+
+1. **Check a composite flag's base rate before freezing it.** The D8 defect was
+   predictable from the per sensor rates, which were available at Gate 1.
+2. **Consider blocking the screen by time period.** The decisive train screen and the
+   null holdout result together suggest the associations are time local. Screening
+   within period and testing for stability across periods would have measured that
+   directly, rather than leaving it to be inferred from three separate observations.
+3. **Pre-declare the drift analysis.** The most valuable finding in this project, that
+   the process moved and the associations did not transfer, emerged from comparing three
+   reports. It deserved to be a planned measurement rather than a synthesis after the
+   fact.
