@@ -4,3 +4,8 @@ scipy>=1.11
 scikit-learn>=1.4
 plotly>=5.20
 pytest>=8.0
+
+# Test only. tests/test_screening_math.py checks this project's Benjamini-Hochberg
+# implementation against statsmodels. Without it that check silently skips, which
+# would leave the FDR correction unverified in CI.
+statsmodels>=0.14

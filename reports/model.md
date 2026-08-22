@@ -98,6 +98,9 @@ Cost ratio from 1 to 1 up to 100 to 1, 25 points, log spaced. The threshold is r
 | 82.5400 | 0.0533 | 471 | 26 | 0 | 445 | 1.0000 | 0.0552 | 1.0000 |
 | 100.0000 | 0.0533 | 471 | 26 | 0 | 445 | 1.0000 | 0.0552 | 1.0000 |
 
+**Reading the sweep.** At the base ratio the model flags 7 lots and catches 0 of 26 failures. Across the entire sweep the best precision achieved at any threshold is 0.0690, against a base failure rate of 0.0552, so flagged lots are barely more likely to fail than unflagged ones at any operating point. Full recall first appears at a cost ratio of 46 to 1, and it is reached by flagging 471 of 471 lots, that is, every lot. At that point precision equals the base failure rate exactly, which is the arithmetic signature of a model contributing nothing: the only way it catches every failure is to stop discriminating at all.
+
+
 ## 6. Permutation importance
 
 Computed on the holdout by average precision, 20 repeats. Top 15 shown.

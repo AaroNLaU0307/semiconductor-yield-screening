@@ -13,6 +13,12 @@ Holdout PR-AUC is **0.062, with a 95 percent interval of 0.050 to 0.098**, again
 no-skill floor of 0.055. The interval contains the floor. ROC-AUC is 0.539. This is not
 a working detector and should not be used as one.
 
+The cost sweep makes the same point without any statistics. Across every threshold from
+a 1 to 1 up to a 100 to 1 cost ratio, the best precision the model reaches is 0.069
+against a base failure rate of 0.055. It first achieves full recall at a 46 to 1 ratio,
+and it does so by flagging all 471 holdout lots, at which point precision equals the base
+rate exactly. The only way this model catches every failure is to stop discriminating.
+
 **The screen, however, found something real.** On the training period, **32 of 424
 features cleared Benjamini-Hochberg at q = 0.10**, and the permutation null is
 decisive: across 2000 label permutations, 91.9 percent produced zero survivors, the
