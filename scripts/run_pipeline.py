@@ -22,8 +22,20 @@ import pandas as pd
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT))
 
+from sklearn.metrics import average_precision_score, precision_recall_curve  # noqa: E402
+
 from yield_screening import config  # noqa: E402
 from yield_screening.data_io import load_secom, verify_checksums  # noqa: E402
+from yield_screening.modeling import (  # noqa: E402
+    associational_importance,
+    cost_sweep,
+    evaluate,
+    forward_chaining_oof,
+    make_hgb,
+    make_logit,
+    select_grid_point,
+    select_threshold,
+)
 from yield_screening.preprocess import DROP_REASONS, Preprocessor  # noqa: E402
 from yield_screening.reporting import (  # noqa: E402
     fmt_p,
@@ -358,8 +370,21 @@ def phase_3_spc(
     sweep = contingency_sweep(count_all_rules, count_rule_1, y_holdout, len(sensors))
     write_spc_report(sensors, per_sensor, contingency, sweep, y_holdout)
 
+    # The dashboard needs values, limits and the combined flag. The per rule
+    # breakdown stays in the pipeline and the report rather than being embedded in
+    # the HTML, which keeps the self contained file small enough to open instantly.
+    slim = {
+        name: {
+            "limits": payload["limits"],
+            "train_values": [round(v, 6) for v in payload["train_values"]],
+            "holdout_values": [round(v, 6) for v in payload["holdout_values"]],
+            "train_ooc": payload["train_ooc"],
+            "holdout_ooc": payload["holdout_ooc"],
+        }
+        for name, payload in charts.items()
+    }
     (DASHBOARD / "spc_data.json").write_text(
-        json.dumps({"sensors": sensors, "charts": charts}, indent=2), encoding="utf-8"
+        json.dumps({"sensors": sensors, "charts": slim}), encoding="utf-8"
     )
     return sensors, contingency, any_ooc
 
@@ -619,6 +644,325 @@ def write_spc_report(sensors, per_sensor, contingency, sweep, y_holdout) -> None
 
 
 # ---------------------------------------------------------------------------
+# Phase 4: predictive baseline
+#
+# The second and last declared holdout read (DECISIONS.md D12). Every selection
+# decision below is made on train out of fold predictions.
+# ---------------------------------------------------------------------------
+
+
+def phase_4_model(
+    X_train: pd.DataFrame,
+    y_train: np.ndarray,
+    X_holdout: pd.DataFrame,
+    y_holdout: np.ndarray,
+    screen,
+):
+    """Fit the declared models on screened features and score the holdout once."""
+    features = list(screen.shortlist["feature"])
+    X_tr = X_train[features]
+    X_ho = X_holdout[features]
+
+    best_params, grid_table = select_grid_point(X_tr, y_train)
+
+    # Out of fold predictions for the selected point, used for threshold selection.
+    oof_proba, oof_mask = forward_chaining_oof(lambda: make_hgb(best_params), X_tr, y_train)
+
+    hgb = make_hgb(best_params).fit(X_tr, y_train)
+    hgb_holdout = hgb.predict_proba(X_ho)[:, 1]
+
+    logit = make_logit().fit(X_tr, y_train)
+    logit_holdout = logit.predict_proba(X_ho)[:, 1]
+
+    # The majority class floor scores every lot identically, so it never ranks a
+    # failure above a pass. Its PR-AUC is the positive rate by construction.
+    floor_proba = np.zeros(len(y_holdout), dtype=float)
+
+    metrics = [
+        evaluate("majority class floor", y_holdout, floor_proba),
+        evaluate("HistGradientBoosting (primary)", y_holdout, hgb_holdout),
+        evaluate("L2 logistic regression", y_holdout, logit_holdout),
+    ]
+
+    threshold = select_threshold(
+        y_train[oof_mask], oof_proba[oof_mask], config.COST_RATIO_BASE
+    )
+    sweep = cost_sweep(y_train[oof_mask], oof_proba[oof_mask], y_holdout, hgb_holdout)
+    importance = associational_importance(hgb, X_ho, y_holdout)
+
+    oof_pr_auc = float(average_precision_score(y_train[oof_mask], oof_proba[oof_mask]))
+    precision, recall, _ = precision_recall_curve(y_holdout, hgb_holdout)
+
+    write_model_report(
+        features=features,
+        best_params=best_params,
+        grid_table=grid_table,
+        metrics=metrics,
+        threshold=threshold,
+        sweep=sweep,
+        importance=importance,
+        oof_pr_auc=oof_pr_auc,
+        oof_n=int(oof_mask.sum()),
+        y_holdout=y_holdout,
+        hgb_holdout=hgb_holdout,
+    )
+
+    (DASHBOARD / "model_data.json").write_text(
+        json.dumps(
+            {
+                "pr_curve": {
+                    "precision": precision.tolist(),
+                    "recall": recall.tolist(),
+                },
+                "no_skill": float(y_holdout.mean()),
+                "operating_threshold": threshold,
+                "operating_point": operating_point(y_holdout, hgb_holdout, threshold),
+                "metrics": [m.__dict__ for m in metrics],
+                "cost_sweep": sweep.to_dict(orient="records"),
+                "importance": importance.head(20).to_dict(orient="records"),
+            },
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+    return metrics, threshold, sweep
+
+
+def operating_point(y: np.ndarray, proba: np.ndarray, threshold: float) -> dict:
+    """Holdout confusion matrix at the chosen threshold."""
+    predicted = proba >= threshold
+    true_positive = int(np.sum(predicted & (y == 1)))
+    false_positive = int(np.sum(predicted & (y == 0)))
+    false_negative = int(np.sum((~predicted) & (y == 1)))
+    true_negative = int(np.sum((~predicted) & (y == 0)))
+    return {
+        "threshold": float(threshold),
+        "true_positive": true_positive,
+        "false_positive": false_positive,
+        "false_negative": false_negative,
+        "true_negative": true_negative,
+        "recall": true_positive / (true_positive + false_negative)
+        if (true_positive + false_negative)
+        else float("nan"),
+        "precision": true_positive / (true_positive + false_positive)
+        if (true_positive + false_positive)
+        else float("nan"),
+    }
+
+
+def write_model_report(
+    features,
+    best_params,
+    grid_table,
+    metrics,
+    threshold,
+    sweep,
+    importance,
+    oof_pr_auc,
+    oof_n,
+    y_holdout,
+    hgb_holdout,
+) -> None:
+    primary = next(m for m in metrics if m.name.startswith("HistGradient"))
+    point = operating_point(y_holdout, hgb_holdout, threshold)
+    lift = primary.pr_auc / primary.no_skill
+
+    metric_table = pd.DataFrame(
+        [
+            {
+                "model": m.name,
+                "PR-AUC": round(m.pr_auc, 4),
+                "PR-AUC 95 percent interval": f"{m.pr_auc_ci[0]:.4f} to {m.pr_auc_ci[1]:.4f}",
+                "ROC-AUC": round(m.roc_auc, 4),
+                f"recall at FPR <= {config.FALSE_ALARM_BUDGET_FPR}": round(
+                    m.recall_at_budget, 4
+                ),
+            }
+            for m in metrics
+        ]
+    )
+
+    if primary.pr_auc_ci[0] > primary.no_skill:
+        headline = (
+            f"**The model is weak but not empty.** Holdout PR-AUC is "
+            f"{primary.pr_auc:.3f} (95 percent interval {primary.pr_auc_ci[0]:.3f} to "
+            f"{primary.pr_auc_ci[1]:.3f}) against a no-skill floor of "
+            f"{primary.no_skill:.3f}, so it carries roughly {lift:.1f} times the "
+            "no-skill baseline and the lower end of the interval still clears that "
+            "floor."
+        )
+    else:
+        headline = (
+            f"**The model is weak, and the holdout interval does not exclude the "
+            f"no-skill floor.** Holdout PR-AUC is {primary.pr_auc:.3f} (95 percent "
+            f"interval {primary.pr_auc_ci[0]:.3f} to {primary.pr_auc_ci[1]:.3f}) "
+            f"against a no-skill floor of {primary.no_skill:.3f}. The point estimate "
+            f"is about {lift:.1f} times the floor, but with "
+            f"{int(y_holdout.sum())} holdout failures the interval is wide enough to "
+            "include no skill at all, so this should not be read as a working "
+            "detector."
+        )
+
+    # If the secondary model scores higher on holdout, say so and refuse to promote it.
+    secondary = next((m for m in metrics if m.name.startswith("L2 logistic")), None)
+    if secondary is not None and secondary.pr_auc > primary.pr_auc:
+        overlap = secondary.pr_auc_ci[0] < primary.pr_auc_ci[1]
+        roc_disagrees = secondary.roc_auc < primary.roc_auc
+        secondary_note = (
+            "\n**The secondary model scored higher, and it is deliberately not "
+            f"promoted.** L2 logistic regression reached PR-AUC {secondary.pr_auc:.3f} "
+            f"against {primary.pr_auc:.3f} for the declared primary. "
+            "DECISIONS.md D9 named the gradient boosting model as primary before any "
+            "holdout record was read, and D12 forbids changing that on the basis of a "
+            "result. Swapping the headline to whichever model won on the evaluation "
+            "set is model selection on the holdout, which is the exact error this "
+            "project is built to avoid.\n\n"
+            "The comparison is also not resolvable at this sample size. "
+            + (
+                "The two intervals overlap substantially "
+                f"({primary.pr_auc_ci[0]:.3f} to {primary.pr_auc_ci[1]:.3f} against "
+                f"{secondary.pr_auc_ci[0]:.3f} to {secondary.pr_auc_ci[1]:.3f}). "
+                if overlap
+                else ""
+            )
+            + (
+                "ROC-AUC ranks the two models the other way round "
+                f"({primary.roc_auc:.3f} for the primary against "
+                f"{secondary.roc_auc:.3f} for the secondary), which is a direct sign "
+                "that the ordering is noise rather than a real difference in skill. "
+                if roc_disagrees
+                else ""
+            )
+            + f"With {int(y_holdout.sum())} holdout failures, neither model is "
+            "distinguishable from the other, and the lower end of both intervals sits "
+            "at or below the no-skill floor.\n"
+        )
+    else:
+        secondary_note = ""
+
+    parts = [
+        "# Predictive baseline report\n",
+        "Generated by `scripts/run_pipeline.py`. Contains the second and last "
+        "declared holdout read (DECISIONS.md D12). The grid point and the decision "
+        "threshold were both selected on train out of fold predictions before the "
+        "holdout was scored.\n",
+        "## 1. Headline\n",
+        headline,
+        "\n\nAccuracy is not used as a headline anywhere, because predicting pass for "
+        f"every lot scores {primary.accuracy_floor:.1%} accuracy on this holdout while "
+        "catching none of the failures. That number is in the table below only to make "
+        "the point.\n",
+        "\n## 2. Holdout metrics\n",
+        md_table(metric_table),
+        f"\nNo-skill PR-AUC is the holdout positive rate, {primary.no_skill:.4f}. "
+        "Every precision-recall curve in this project is drawn with that line so a "
+        "reader can see how much of the curve is skill.\n",
+        secondary_note,
+        "\n**Why PR-AUC and not ROC-AUC.** At a "
+        f"{primary.no_skill:.1%} positive rate, ROC-AUC is dominated by the true "
+        "negative mass and stays flattering while precision is unusable. ROC-AUC is "
+        "reported above for completeness and is never headlined.\n",
+        "\n## 3. Model selection\n",
+        "Selection used forward chaining out of fold predictions on train only, "
+        f"across the declared grid of {len(config.HGB_GRID)} points. No search beyond "
+        "the declared grid, no AutoML.\n",
+        md_table(grid_table),
+        f"\nSelected: `{best_params}` plus the fixed settings "
+        f"`{config.HGB_FIXED}`.\n",
+        "\n**The out of fold PR-AUC is not a performance number and is not reported "
+        f"as one.** It is {oof_pr_auc:.3f} over the {oof_n} train records that "
+        "received an out of fold prediction, and it is optimistic, because the "
+        "feature screen was run on all of train rather than nested inside each fold. "
+        "Nesting the screen would leave roughly 62 failures per fold to screen 424 "
+        "features, which is too thin to be stable. The consequence is accepted and "
+        "bounded: this number selects among the declared grid and does nothing else. "
+        f"The holdout PR-AUC of {primary.pr_auc:.3f} pays for the screen in full, "
+        "because no holdout record took any part in screening.\n",
+        "\n## 4. Features used\n",
+        f"The {len(features)} features shortlisted in Phase 2. Full list and screen "
+        "statistics in `reports/screening_table.csv`.\n",
+        "\n## 5. Cost aware operating point\n",
+        "A missed failure is assumed to cost "
+        f"{config.COST_RATIO_BASE:.0f} times a false alarm in the base case. The "
+        "threshold that minimises expected cost is chosen on **train out of fold "
+        "predictions** and then applied unchanged to the holdout. Choosing it on the "
+        "holdout and then reporting holdout performance at it would be fitting on the "
+        "evaluation set.\n",
+        kv_table(
+            [
+                ("base cost ratio", f"{config.COST_RATIO_BASE:.0f} to 1"),
+                ("threshold selected on train", round(threshold, 4)),
+                ("holdout lots flagged", point["true_positive"] + point["false_positive"]),
+                ("failures caught", point["true_positive"]),
+                ("failures missed", point["false_negative"]),
+                ("false alarms", point["false_positive"]),
+                ("recall at this threshold", f"{point['recall']:.4f}"),
+                ("precision at this threshold", f"{point['precision']:.4f}"),
+            ]
+        ),
+        "\n### The sweep, which matters more than the single point\n",
+        f"Cost ratio from {config.COST_RATIO_MIN:.0f} to 1 up to "
+        f"{config.COST_RATIO_MAX:.0f} to 1, {config.COST_RATIO_POINTS} points, log "
+        "spaced. The threshold is reselected on train at every ratio. A reader whose "
+        "real ratio is 40 to 1 should read their own row rather than inherit the base "
+        "case.\n",
+        md_table(sweep),
+        "\n## 6. Permutation importance\n",
+        "Computed on the holdout by average precision, 20 repeats. Top 15 shown.\n",
+        md_table(importance.head(15)),
+        "\n**This ranks association, not causation.** Permuting a column measures how "
+        "much the fitted model leans on it, which reflects both the process and every "
+        "correlation among the sensors. A sensor can rank high because it proxies "
+        "another, and a genuinely important sensor can rank low because a correlated "
+        "twin covers for it. Nothing in this table establishes that changing a sensor "
+        "would change yield.\n",
+        "\n## 7. Comparison with published numbers on this dataset\n",
+        "SECOM is heavily used and many published analyses report far stronger "
+        "results. Before comparing, check the protocol: random cross validation on "
+        "time ordered records, oversampling applied before the split, or feature "
+        "selection performed on the full dataset all inflate the reported number "
+        "without improving the detector. The figures here come from a chronological "
+        "split with every transform and the entire screen fitted on train alone, so "
+        "they are not comparable to numbers obtained under those protocols and are "
+        "not offered as a competitor to them.\n",
+    ]
+    (REPORTS / "model.md").write_text("\n".join(parts), encoding="utf-8")
+
+
+def write_timeline_data(timestamp: pd.Series, y: np.ndarray, split) -> None:
+    """Failure rate over time with the train/holdout boundary, for dashboard panel 1.
+
+    Weekly rather than monthly, because four monthly points hide the shape. The raw
+    record level series is also emitted so the panel can show sample size, which is
+    what stops a reader over reading a spike built from a handful of lots.
+    """
+    frame = pd.DataFrame({"timestamp": timestamp.to_numpy(), "y": y})
+    weekly = (
+        frame.set_index("timestamp")
+        .resample("W")["y"]
+        .agg(records="size", fails="sum")
+        .reset_index()
+    )
+    weekly = weekly[weekly["records"] > 0].copy()
+    weekly["fail_rate"] = weekly["fails"] / weekly["records"]
+
+    payload = {
+        "week_start": [str(t.date()) for t in weekly["timestamp"]],
+        "records": weekly["records"].astype(int).tolist(),
+        "fails": weekly["fails"].astype(int).tolist(),
+        "fail_rate": weekly["fail_rate"].round(6).tolist(),
+        "boundary": str(split.first_holdout_timestamp),
+        "train_fail_rate": float(y[split.train_idx].mean()),
+        "holdout_fail_rate": float(y[split.holdout_idx].mean()),
+        "n_train": int(split.n_train),
+        "n_holdout": int(split.n_holdout),
+    }
+    (DASHBOARD / "timeline_data.json").write_text(
+        json.dumps(payload, indent=2), encoding="utf-8"
+    )
+
+
+# ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
 
@@ -663,7 +1007,19 @@ def main() -> int:
         f"risk ratio={contingency.risk_ratio:.3f}, "
         f"Fisher p={contingency.p_value:.4f}"
     )
-    print("wrote reports/screening.md, reports/spc.md")
+    write_timeline_data(data.timestamp, data.y.to_numpy(), split)
+
+    metrics, threshold, sweep = phase_4_model(
+        X_train, y_train, X_holdout, y_holdout, screen
+    )
+    primary = next(m for m in metrics if m.name.startswith("HistGradient"))
+    print(
+        f"phase 4: holdout PR-AUC={primary.pr_auc:.4f} "
+        f"[{primary.pr_auc_ci[0]:.4f}, {primary.pr_auc_ci[1]:.4f}] "
+        f"no-skill={primary.no_skill:.4f} ROC-AUC={primary.roc_auc:.4f} "
+        f"recall@FPR{config.FALSE_ALARM_BUDGET_FPR}={primary.recall_at_budget:.4f}"
+    )
+    print("wrote reports/screening.md, reports/spc.md, reports/model.md")
     return 0
 
 

@@ -12,18 +12,33 @@ import pandas as pd
 
 
 def md_table(frame: pd.DataFrame, floatfmt: str = "{:.4f}") -> str:
-    """Render a DataFrame as a GitHub flavoured markdown table."""
-    header = "| " + " | ".join(str(c) for c in frame.columns) + " |"
-    rule = "| " + " | ".join("---" for _ in frame.columns) + " |"
-    lines = [header, rule]
-    for _, row in frame.iterrows():
+    """Render a DataFrame as a GitHub flavoured markdown table.
+
+    Formatting is decided per column from the column dtype, not per value. Iterating
+    rows would collapse a mixed frame to one dtype and print integer counts as
+    "26.0000", which is both ugly and quietly misleading about what was measured.
+    """
+    formatted: dict[str, list[str]] = {}
+    for name in frame.columns:
+        column = frame[name]
+        is_float = pd.api.types.is_float_dtype(column)
         cells = []
-        for value in row:
-            if isinstance(value, (float, np.floating)) and not isinstance(value, bool):
-                cells.append("n/a" if pd.isna(value) else floatfmt.format(value))
+        for value in column:
+            if pd.isna(value):
+                cells.append("n/a")
+            elif is_float and not isinstance(value, bool):
+                cells.append(floatfmt.format(value))
+            elif isinstance(value, (float, np.floating)) and not isinstance(value, bool):
+                cells.append(floatfmt.format(value))
             else:
                 cells.append(str(value))
-        lines.append("| " + " | ".join(cells) + " |")
+        formatted[str(name)] = cells
+
+    header = "| " + " | ".join(formatted) + " |"
+    rule = "| " + " | ".join("---" for _ in formatted) + " |"
+    lines = [header, rule]
+    for i in range(len(frame)):
+        lines.append("| " + " | ".join(formatted[c][i] for c in formatted) + " |")
     return "\n".join(lines)
 
 

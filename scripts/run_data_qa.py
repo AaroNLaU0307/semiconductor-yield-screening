@@ -21,6 +21,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT))
 
 from yield_screening.data_io import file_checksums, load_secom  # noqa: E402
+from yield_screening.reporting import md_table  # noqa: E402
 
 REPORT_MD = REPO_ROOT / "reports" / "data_quality.md"
 REPORT_JSON = REPO_ROOT / "reports" / "data_quality.json"
@@ -129,22 +130,6 @@ def monthly_table(timestamp: pd.Series, y: pd.Series) -> pd.DataFrame:
     table = frame.groupby("month")["y"].agg(records="size", fails="sum")
     table["fail_rate"] = table["fails"] / table["records"]
     return table.reset_index()
-
-
-def md_table(frame: pd.DataFrame, floatfmt: str = "{:.4f}") -> str:
-    """Render a DataFrame as a GitHub flavoured markdown table."""
-    header = "| " + " | ".join(str(c) for c in frame.columns) + " |"
-    rule = "| " + " | ".join("---" for _ in frame.columns) + " |"
-    lines = [header, rule]
-    for _, row in frame.iterrows():
-        cells = []
-        for value in row:
-            if isinstance(value, (float, np.floating)) and not isinstance(value, bool):
-                cells.append("n/a" if pd.isna(value) else floatfmt.format(value))
-            else:
-                cells.append(str(value))
-        lines.append("| " + " | ".join(cells) + " |")
-    return "\n".join(lines)
 
 
 def build_report(summary: dict, tables: dict) -> str:
