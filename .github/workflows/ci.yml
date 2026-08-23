@@ -17,7 +17,7 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
-      - name: Check for em dash or en dash
+      - name: Check for banned typography
         run: python scripts/check_no_em_dash.py
 
       - name: Run tests
