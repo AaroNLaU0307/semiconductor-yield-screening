@@ -22,10 +22,12 @@ import pandas as pd
 from scipy import stats
 
 from .config import (
+    BOOTSTRAP_INTERVAL,
     FALLBACK_LABEL,
     FALLBACK_TOP_K,
     FALLBACK_TRIGGER_BELOW,
     FDR_Q,
+    N_BOOTSTRAP,
     N_PERMUTATIONS,
     RANDOM_SEED,
     SURVIVOR_LABEL,
@@ -80,6 +82,44 @@ def p_from_u(u1: np.ndarray, n1: int, n2: int, sigma: np.ndarray) -> np.ndarray:
     with np.errstate(divide="ignore", invalid="ignore"):
         z = np.where(sigma > 0, (u1 - mu) / np.where(sigma > 0, sigma, 1.0), 0.0)
     return 2.0 * stats.norm.sf(np.abs(z))
+
+
+def bootstrap_rank_biserial(
+    values: np.ndarray,
+    y: np.ndarray,
+    n_resamples: int = N_BOOTSTRAP,
+    seed: int = RANDOM_SEED,
+    interval: tuple[float, float] = BOOTSTRAP_INTERVAL,
+) -> tuple[float, float]:
+    """Percentile interval for one feature's rank-biserial effect size.
+
+    Stratified so the class counts are preserved in every resample. At 26 holdout
+    failures an unstratified resample would sometimes contain very few, and the
+    resulting spread would describe the resampling scheme as much as the data.
+
+    A point estimate of an effect size computed from 26 positives is not a result on
+    its own, which is why this exists: the same standard already applied to PR-AUC in
+    DECISIONS.md D10 applies to effect sizes too.
+    """
+    values = np.asarray(values, dtype=np.float64)
+    y = np.asarray(y).astype(int)
+    positive_idx = np.flatnonzero(y == 1)
+    negative_idx = np.flatnonzero(y == 0)
+    if positive_idx.size < 2 or negative_idx.size < 2:
+        return float("nan"), float("nan")
+
+    rng = np.random.default_rng(seed)
+    n1, n2 = positive_idx.size, negative_idx.size
+    scores = np.empty(n_resamples, dtype=float)
+    for b in range(n_resamples):
+        fail = values[rng.choice(positive_idx, size=n1, replace=True)]
+        ok = values[rng.choice(negative_idx, size=n2, replace=True)]
+        combined = np.concatenate([fail, ok])
+        ranks = stats.rankdata(combined, method="average")
+        u1 = ranks[:n1].sum() - n1 * (n1 + 1.0) / 2.0
+        scores[b] = 2.0 * (u1 / (n1 * n2)) - 1.0
+    low, high = np.percentile(scores, interval)
+    return float(low), float(high)
 
 
 def rank_biserial(u1: np.ndarray, n1: int, n2: int) -> np.ndarray:

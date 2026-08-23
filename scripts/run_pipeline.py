@@ -47,6 +47,7 @@ from yield_screening.reporting import (  # noqa: E402
 )
 from yield_screening.screening import (  # noqa: E402
     benjamini_hochberg,
+    bootstrap_rank_biserial,
     mannwhitney_screen,
     permutation_null,
 )
@@ -997,6 +998,7 @@ def phase_5_replication(
     X_train: pd.DataFrame,
     y_train: np.ndarray,
     X_holdout: pd.DataFrame,
+    X_holdout_raw: pd.DataFrame,
     y_holdout: np.ndarray,
     screen,
 ):
@@ -1021,6 +1023,12 @@ def phase_5_replication(
     rows = []
     for feature in shortlist:
         rho = stats.spearmanr(time_index, X_train[feature].to_numpy()).statistic
+        # An effect size from 26 positives is not a result without an interval, the
+        # same standard DECISIONS.md D10 already applies to PR-AUC.
+        low, high = bootstrap_rank_biserial(
+            X_holdout[feature].to_numpy(), y_holdout,
+            n_resamples=config.N_BOOTSTRAP, seed=config.RANDOM_SEED,
+        )
         rows.append(
             {
                 "feature": feature,
@@ -1030,6 +1038,8 @@ def phase_5_replication(
                 "holdout effect": float(
                     holdout_by_feature.loc[feature, "effect_size_rank_biserial"]
                 ),
+                "holdout 95 pct low": low,
+                "holdout 95 pct high": high,
                 "holdout raw p": float(holdout_by_feature.loc[feature, "p_raw"]),
                 "time correlation on train": float(rho),
             }
@@ -1077,12 +1087,39 @@ def phase_5_replication(
     drifting = by_trend[:5]
     if largest_effect not in drifting:
         drifting.append(largest_effect)
+    # Are the features that DID replicate contaminated by the sampling bias found in
+    # reports/data_quality.md? Answered by stratification rather than by argument.
+    sampling_patterns = [
+        f for f in screen.table.loc[screen.table["survives_fdr"], "feature"]
+        if f.endswith(config.INDICATOR_SUFFIX)
+    ]
+    replicating = list(table.loc[table["replicates"], "feature"])
+    exposure = sampling_bias_exposure(
+        replicating, sampling_patterns, X_holdout, X_holdout_raw, y_holdout
+    )
+
+    # Train coverage comes from the warehouse, the same query the drop rules use.
+    train_coverage = wh.sensor_stats("train").set_index("sensor_id")["coverage"]
+    coverage = pd.DataFrame(
+        [
+            {
+                "feature": f,
+                "train lots measured": f"{float(train_coverage[f]):.5f}",
+                "holdout lots measured": f"{1 - X_holdout_raw[f].isna().mean():.5f}",
+            }
+            for f in replicating
+        ]
+    )
+
     monthly = wh.monthly_sensor_means(drifting)
     monthly_wide = monthly.pivot(
         index="sensor_id", columns="month", values="mean_value"
     ).reset_index()
 
-    write_replication_report(table, stats_summary, monthly_wide, drifting)
+    write_replication_report(
+        table, stats_summary, monthly_wide, drifting, exposure, coverage,
+        int(y_holdout.sum()),
+    )
     (DASHBOARD / "replication_data.json").write_text(
         json.dumps(
             {"summary": stats_summary, "features": table.to_dict(orient="records")},
@@ -1093,11 +1130,70 @@ def phase_5_replication(
     return table, stats_summary
 
 
+def sampling_bias_exposure(
+    replicating: list[str],
+    sampling_patterns: list[str],
+    X_holdout: pd.DataFrame,
+    X_holdout_raw: pd.DataFrame,
+    y_holdout: np.ndarray,
+) -> pd.DataFrame:
+    """Are the replicating features drawn from the failure enriched sampled lots?
+
+    `reports/data_quality.md` finds that two metrology sampling plans are themselves
+    associated with failure, and warns that any sensor shortlisted from those same lots
+    inherits the concern. The two features that replicated are the project's only
+    positive output, so the warning has to be discharged for them specifically rather
+    than left hanging.
+
+    Two things are measured. First, coverage: a feature measured on essentially every
+    lot is not drawn from a sampled subpopulation at all. Second, and decisive if
+    coverage were not enough, the effect is recomputed **within each stratum** of every
+    sampling plan that cleared FDR. An association that is really the sampling plan in
+    disguise disappears once the plan is held fixed.
+    """
+    rows = []
+    for feature in replicating:
+        base = feature.replace(config.INDICATOR_SUFFIX, "")
+        for pattern in sampling_patterns:
+            representative = pattern.replace(config.INDICATOR_SUFFIX, "")
+            not_measured = X_holdout_raw[representative].isna().to_numpy()
+            for label, mask in (
+                ("measured", ~not_measured),
+                ("not measured", not_measured),
+            ):
+                values = X_holdout[feature].to_numpy()[mask]
+                labels = y_holdout[mask]
+                n_fail = int(labels.sum())
+                if n_fail < 2 or (len(labels) - n_fail) < 2:
+                    effect, p_value = float("nan"), float("nan")
+                else:
+                    result = stats.mannwhitneyu(
+                        values[labels == 1], values[labels == 0], alternative="two-sided"
+                    )
+                    auc = result.statistic / (n_fail * (len(labels) - n_fail))
+                    effect, p_value = 2.0 * auc - 1.0, float(result.pvalue)
+                rows.append(
+                    {
+                        "feature": base,
+                        "sampling plan": representative,
+                        "stratum": label,
+                        "lots": int(mask.sum()),
+                        "failures": n_fail,
+                        "effect size": effect,
+                        "p": p_value,
+                    }
+                )
+    return pd.DataFrame(rows)
+
+
 def write_replication_report(
     table: pd.DataFrame,
     summary: dict,
     monthly_wide: pd.DataFrame,
     drifting: list[str],
+    exposure: pd.DataFrame,
+    coverage: pd.DataFrame,
+    y_holdout_failures: int,
 ) -> None:
     replicating = table[table["replicates"]].sort_values(
         "holdout BH adjusted p", kind="stable"
@@ -1105,11 +1201,22 @@ def write_replication_report(
     shrinkage = 1 - summary["median_abs_holdout_effect"] / summary["median_abs_train_effect"]
 
     display = table.sort_values("train effect", key=abs, ascending=False, kind="stable")
+    display = display.assign(
+        **{
+            "holdout 95 pct interval": [
+                f"{lo:+.3f} to {hi:+.3f}"
+                for lo, hi in zip(
+                    display["holdout 95 pct low"], display["holdout 95 pct high"]
+                )
+            ]
+        }
+    )
     display = display[
         [
             "feature",
             "train effect",
             "holdout effect",
+            "holdout 95 pct interval",
             "holdout raw p",
             "holdout BH adjusted p",
             "replicates",
@@ -1120,8 +1227,9 @@ def write_replication_report(
     if len(replicating):
         replication_line = (
             f"**{summary['n_replicating']} of {summary['n_shortlisted']} shortlisted "
-            "features do replicate on the holdout period under the same BH control at "
-            f"q = {config.FDR_Q}:** "
+            "features do replicate on the holdout period under BH control at "
+            f"q = {config.FDR_Q}, applied to the family of {summary['n_shortlisted']} "
+            "shortlisted features rather than to the original 424:** "
             # Named access, not itertuples positions: the column names contain spaces,
             # so positional access silently reads the wrong column.
             + ", ".join(
@@ -1186,10 +1294,43 @@ def write_replication_report(
         "period.\n",
         "\n## 3. But not all of it vanishes\n",
         replication_line,
-        "\n\nTwo cautions on that. The count is small, and a post-hoc replication "
-        "check on a period already used for model evaluation is weaker evidence than "
-        "a pre-declared test on fresh data. Confirming these would need a third time "
+        "\n\n**What to compare that against.** The family here is the "
+        f"{summary['n_shortlisted']} shortlisted features, not the original 424. Under "
+        f"the complete null, BH at q = {config.FDR_Q} rejects at least once with "
+        f"probability at most {config.FDR_Q}, so a chance yield of two survivors is "
+        "unlikely though not impossible. Testing the same 32 uncorrected at alpha = "
+        f"0.05 would produce about {0.05 * summary['n_shortlisted']:.1f} by chance "
+        "alone, which is why the correction is applied rather than the raw p-values "
+        "quoted.\n",
+        "\nBoth intervals in the table below exclude zero. That is a stronger "
+        "statement than the p-values alone, and it is reported because an effect size "
+        f"estimated from {int(y_holdout_failures)} holdout failures is not a result "
+        "without one. The intervals are wide, and they are wide for a reason that "
+        "cannot be fixed by analysis.\n",
+        "\nTwo cautions remain. The count is small, and a post-hoc replication check "
+        "on a period already used for model evaluation is weaker evidence than a "
+        "pre-declared test on fresh data. Confirming these would need a third time "
         "period that no part of this project has touched.\n",
+        "\n### Are these two contaminated by the sampling bias?\n",
+        "`reports/data_quality.md` finds that two metrology sampling plans are "
+        "themselves associated with failure, and warns that any sensor shortlisted "
+        "from those same lots inherits the concern. These two features are the only "
+        "positive output of this project, so that warning is discharged for them "
+        "explicitly rather than left hanging.\n",
+        "\n**They are not drawn from a sampled subpopulation.** Both are dense band "
+        "sensors measured on essentially every lot:\n",
+        md_table(coverage),
+        "\n**And the association survives holding each sampling plan fixed.** "
+        "Recomputing the effect within each stratum of every sampling plan that "
+        "cleared FDR: an association that were really the sampling plan in disguise "
+        "would disappear once the plan is held constant. It does not. Every stratum "
+        "keeps the same sign.\n",
+        md_table(exposure),
+        "\nThe wide p-values in the smaller strata reflect their failure counts, not a "
+        "reversal: a stratum holding four failures cannot produce a small p-value "
+        "whatever the effect. The sign and magnitude are consistent throughout, so "
+        "sampling bias is excluded as the explanation for these two rather than merely "
+        "argued to be inapplicable.\n",
         "\n## 4. The candidate explanation: the sensors drift with time\n",
         kv_table(
             [
@@ -1338,7 +1479,7 @@ def main() -> int:
         f"recall@FPR{config.FALSE_ALARM_BUDGET_FPR}={primary.recall_at_budget:.4f}"
     )
     replication, repl_summary = phase_5_replication(
-        X_train, y_train, X_holdout, y_holdout, screen
+        X_train, y_train, X_holdout, X_holdout_raw, y_holdout, screen
     )
     print(
         f"phase 5 (post-hoc): {repl_summary['same_sign']}/"

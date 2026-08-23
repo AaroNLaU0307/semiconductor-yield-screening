@@ -200,7 +200,47 @@ The same grid computed on the train partition alone. The thresholds fixed in DEC
 | train fail rate | 0.0712 |
 | holdout fail rate | 0.0552 |
 
-## 8. Raw file checksums
+## 8. Outliers, detected and reported but never removed
+
+Detection uses the **median and the median absolute deviation**, not the mean and standard deviation. Both of the latter are themselves distorted by the outliers being looked for, so a mean based rule finds fewer outliers exactly when there are more of them. A value is flagged when it lies more than 5 scaled MADs from its sensor's median, which at a normal distribution would flag roughly six values per million.
+
+Measured on the train partition:
+
+| property | value |
+| --- | --- |
+| sensors profiled on train | 590 |
+| sensors with no robust scale (MAD is zero) | 133 |
+| sensors with at least one flagged value | 343 of 457 |
+| flagged cells in total | 8351 |
+| median per-sensor flagged share | 0.00547 |
+| worst per-sensor flagged share | 0.3254 |
+| largest robust z anywhere in train | 198,948 |
+
+Sensors carrying the most extreme single values:
+
+| sensor | flagged values | share of readings | largest robust z |
+| --- | --- | --- | --- |
+| sensor_340 | 29 | 0.0266 | 198948.2677 |
+| sensor_204 | 24 | 0.0220 | 109292.9347 |
+| sensor_067 | 10 | 0.0092 | 58845.5016 |
+| sensor_287 | 45 | 0.0411 | 5628.8441 |
+| sensor_152 | 35 | 0.0319 | 4669.6370 |
+| sensor_251 | 148 | 0.1350 | 3338.7293 |
+| sensor_523 | 140 | 0.1277 | 2836.6353 |
+| sensor_389 | 133 | 0.1214 | 2107.1091 |
+
+**Nothing is removed, winsorised, or clipped.** Deleting an inconvenient reading from process data destroys the evidence that a tool did something unusual, and an excursion is often the most informative record in the set. The outliers are instead handled by choosing methods that tolerate them:
+
+
+- The screen uses a **rank based** test (Mann-Whitney U), so a value at a robust z of six figures contributes exactly one rank, the same as any other high value. A t-test on this data would be dominated by a handful of cells.
+- Imputation uses the **train median**, not the mean, for the same reason.
+- The effect size is **rank-biserial**, which is scale free and bounded, so no single reading can inflate it.
+- SPC is the one place this bites, and it is stated there: I-MR limits assume approximate normality, which these distributions do not satisfy, so those limits are treated as a screening heuristic rather than a calibrated alarm rate (see `reports/spc.md`).
+
+
+Sensors with no robust scale are those where more than half the values are identical, so the MAD is zero and no multiple of it is meaningful. They are counted separately above rather than being assigned an infinite score, and most of them are removed anyway by the constant and near constant drop rules in section 6.
+
+## 9. Raw file checksums
 
 | file | sha256 | bytes |
 | --- | --- | --- |

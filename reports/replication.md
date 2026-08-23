@@ -23,10 +23,44 @@ The sign agreement of 15 out of 32 is what a coin would produce. The median abso
 
 ## 3. But not all of it vanishes
 
-**2 of 32 shortlisted features do replicate on the holdout period under the same BH control at q = 0.1:** `sensor_103` (train +0.294, holdout +0.430, adjusted p 0.0073), `sensor_510` (train +0.240, holdout +0.339, adjusted p 0.0587). These are the candidates a process engineer should look at first, because they are the only ones that survived a change of time period.
+**2 of 32 shortlisted features do replicate on the holdout period under BH control at q = 0.1, applied to the family of 32 shortlisted features rather than to the original 424:** `sensor_103` (train +0.294, holdout +0.430, adjusted p 0.0073), `sensor_510` (train +0.240, holdout +0.339, adjusted p 0.0587). These are the candidates a process engineer should look at first, because they are the only ones that survived a change of time period.
 
 
-Two cautions on that. The count is small, and a post-hoc replication check on a period already used for model evaluation is weaker evidence than a pre-declared test on fresh data. Confirming these would need a third time period that no part of this project has touched.
+**What to compare that against.** The family here is the 32 shortlisted features, not the original 424. Under the complete null, BH at q = 0.1 rejects at least once with probability at most 0.1, so a chance yield of two survivors is unlikely though not impossible. Testing the same 32 uncorrected at alpha = 0.05 would produce about 1.6 by chance alone, which is why the correction is applied rather than the raw p-values quoted.
+
+
+Both intervals in the table below exclude zero. That is a stronger statement than the p-values alone, and it is reported because an effect size estimated from 26 holdout failures is not a result without one. The intervals are wide, and they are wide for a reason that cannot be fixed by analysis.
+
+
+Two cautions remain. The count is small, and a post-hoc replication check on a period already used for model evaluation is weaker evidence than a pre-declared test on fresh data. Confirming these would need a third time period that no part of this project has touched.
+
+
+### Are these two contaminated by the sampling bias?
+
+`reports/data_quality.md` finds that two metrology sampling plans are themselves associated with failure, and warns that any sensor shortlisted from those same lots inherits the concern. These two features are the only positive output of this project, so that warning is discharged for them explicitly rather than left hanging.
+
+
+**They are not drawn from a sampled subpopulation.** Both are dense band sensors measured on essentially every lot:
+
+| feature | train lots measured | holdout lots measured |
+| --- | --- | --- |
+| sensor_103 | 0.99909 | 0.99788 |
+| sensor_510 | 0.99909 | 0.99788 |
+
+**And the association survives holding each sampling plan fixed.** Recomputing the effect within each stratum of every sampling plan that cleared FDR: an association that were really the sampling plan in disguise would disappear once the plan is held constant. It does not. Every stratum keeps the same sign.
+
+| feature | sampling plan | stratum | lots | failures | effect size | p |
+| --- | --- | --- | --- | --- | --- | --- |
+| sensor_103 | sensor_072 | measured | 164 | 9 | 0.2222 | 0.2645 |
+| sensor_103 | sensor_072 | not measured | 307 | 17 | 0.5306 | 0.0002 |
+| sensor_103 | sensor_112 | measured | 89 | 4 | 0.5118 | 0.0866 |
+| sensor_103 | sensor_112 | not measured | 382 | 22 | 0.4159 | 0.0011 |
+| sensor_510 | sensor_072 | measured | 164 | 9 | 0.2875 | 0.1487 |
+| sensor_510 | sensor_072 | not measured | 307 | 17 | 0.3627 | 0.0120 |
+| sensor_510 | sensor_112 | measured | 89 | 4 | 0.5647 | 0.0567 |
+| sensor_510 | sensor_112 | not measured | 382 | 22 | 0.2932 | 0.0210 |
+
+The wide p-values in the smaller strata reflect their failure counts, not a reversal: a stratum holding four failures cannot produce a small p-value whatever the effect. The sign and magnitude are consistent throughout, so sampling bias is excluded as the explanation for these two rather than merely argued to be inapplicable.
 
 
 ## 4. The candidate explanation: the sensors drift with time
@@ -60,40 +94,40 @@ These are the sensors whose level marches across the record. A univariate test c
 
 `time correlation on train` is the Spearman correlation between the feature and record order, computed on train and without reference to the label.
 
-| feature | train effect | holdout effect | holdout raw p | holdout BH adjusted p | replicates | time correlation on train |
-| --- | --- | --- | --- | --- | --- | --- |
-| sensor_059 | 0.5125 | -0.0545 | 0.6400 | 0.9483 | False | -0.4734 |
-| sensor_477 | 0.3054 | 0.0316 | 0.7862 | 0.9483 | False | -0.1548 |
-| sensor_205 | 0.3031 | 0.0235 | 0.8402 | 0.9483 | False | -0.1454 |
-| sensor_103 | 0.2938 | 0.4297 | 0.0002 | 0.0073 | True | -0.6365 |
-| sensor_341 | 0.2849 | -0.0010 | 0.9929 | 0.9929 | False | -0.1189 |
-| sensor_290 | 0.2535 | -0.0354 | 0.7618 | 0.9483 | False | -0.5053 |
-| sensor_079 | 0.2487 | -0.2053 | 0.0783 | 0.6267 | False | -0.4494 |
-| sensor_028 | -0.2479 | -0.1455 | 0.2122 | 0.6374 | False | 0.5523 |
-| sensor_000 | -0.2422 | 0.1912 | 0.1011 | 0.6374 | False | 0.1099 |
-| sensor_510 | 0.2402 | 0.3388 | 0.0037 | 0.0587 | True | -0.4850 |
-| sensor_033 | 0.2302 | 0.1672 | 0.1515 | 0.6374 | False | -0.2557 |
-| sensor_021 | 0.2248 | 0.1584 | 0.1743 | 0.6374 | False | 0.1048 |
-| sensor_072__notmeasured | -0.2161 | 0.0022 | 0.9821 | 0.9929 | False | 0.3599 |
-| sensor_333 | 0.2125 | -0.0697 | 0.5502 | 0.9483 | False | 0.1275 |
-| sensor_155 | 0.2111 | -0.0244 | 0.8343 | 0.9483 | False | -0.4866 |
-| sensor_122 | -0.2102 | -0.1115 | 0.3390 | 0.7748 | False | 0.2535 |
-| sensor_428 | 0.2102 | -0.0207 | 0.8594 | 0.9483 | False | -0.4894 |
-| sensor_129 | 0.2065 | 0.2243 | 0.0542 | 0.5786 | False | -0.4421 |
-| sensor_197 | 0.2062 | -0.0650 | 0.5773 | 0.9483 | False | 0.1025 |
-| sensor_377 | -0.2049 | 0.0851 | 0.4636 | 0.9272 | False | 0.3446 |
-| sensor_469 | 0.2008 | -0.0347 | 0.7657 | 0.9483 | False | 0.1143 |
-| sensor_351 | 0.1998 | -0.1390 | 0.2333 | 0.6374 | False | -0.3888 |
-| sensor_460 | 0.1979 | -0.0071 | 0.9515 | 0.9929 | False | -0.0924 |
-| sensor_213 | 0.1941 | -0.1316 | 0.2589 | 0.6374 | False | -0.3829 |
-| sensor_125 | -0.1938 | -0.1355 | 0.2451 | 0.6374 | False | 0.3042 |
-| sensor_152 | 0.1928 | 0.0354 | 0.7618 | 0.9483 | False | -0.1497 |
-| sensor_040 | -0.1911 | -0.1463 | 0.2095 | 0.6374 | False | 0.4538 |
-| sensor_468 | -0.1897 | -0.0273 | 0.8139 | 0.9483 | False | 0.3623 |
-| sensor_127 | -0.1851 | -0.1461 | 0.2103 | 0.6374 | False | 0.2513 |
-| sensor_128 | 0.1831 | -0.1049 | 0.3682 | 0.7855 | False | -0.1145 |
-| sensor_287 | 0.1826 | 0.0551 | 0.6363 | 0.9483 | False | -0.1529 |
-| sensor_112__notmeasured | -0.1753 | 0.0372 | 0.6383 | 0.9483 | False | 0.2449 |
+| feature | train effect | holdout effect | holdout 95 pct interval | holdout raw p | holdout BH adjusted p | replicates | time correlation on train |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| sensor_059 | 0.5125 | -0.0545 | -0.295 to +0.191 | 0.6400 | 0.9483 | False | -0.4734 |
+| sensor_477 | 0.3054 | 0.0316 | -0.199 to +0.272 | 0.7862 | 0.9483 | False | -0.1548 |
+| sensor_205 | 0.3031 | 0.0235 | -0.208 to +0.262 | 0.8402 | 0.9483 | False | -0.1454 |
+| sensor_103 | 0.2938 | 0.4297 | +0.211 to +0.640 | 0.0002 | 0.0073 | True | -0.6365 |
+| sensor_341 | 0.2849 | -0.0010 | -0.236 to +0.243 | 0.9929 | 0.9929 | False | -0.1189 |
+| sensor_290 | 0.2535 | -0.0354 | -0.251 to +0.188 | 0.7618 | 0.9483 | False | -0.5053 |
+| sensor_079 | 0.2487 | -0.2053 | -0.420 to +0.016 | 0.0783 | 0.6267 | False | -0.4494 |
+| sensor_028 | -0.2479 | -0.1455 | -0.358 to +0.067 | 0.2122 | 0.6374 | False | 0.5523 |
+| sensor_000 | -0.2422 | 0.1912 | -0.092 to +0.459 | 0.1011 | 0.6374 | False | 0.1099 |
+| sensor_510 | 0.2402 | 0.3388 | +0.125 to +0.539 | 0.0037 | 0.0587 | True | -0.4850 |
+| sensor_033 | 0.2302 | 0.1672 | -0.019 to +0.351 | 0.1515 | 0.6374 | False | -0.2557 |
+| sensor_021 | 0.2248 | 0.1584 | -0.029 to +0.353 | 0.1743 | 0.6374 | False | 0.1048 |
+| sensor_072__notmeasured | -0.2161 | 0.0022 | -0.190 to +0.183 | 0.9821 | 0.9929 | False | 0.3599 |
+| sensor_333 | 0.2125 | -0.0697 | -0.255 to +0.121 | 0.5502 | 0.9483 | False | 0.1275 |
+| sensor_155 | 0.2111 | -0.0244 | -0.229 to +0.192 | 0.8343 | 0.9483 | False | -0.4866 |
+| sensor_122 | -0.2102 | -0.1115 | -0.326 to +0.112 | 0.3390 | 0.7748 | False | 0.2535 |
+| sensor_428 | 0.2102 | -0.0207 | -0.226 to +0.194 | 0.8594 | 0.9483 | False | -0.4894 |
+| sensor_129 | 0.2065 | 0.2243 | -0.025 to +0.482 | 0.0542 | 0.5786 | False | -0.4421 |
+| sensor_197 | 0.2062 | -0.0650 | -0.247 to +0.146 | 0.5773 | 0.9483 | False | 0.1025 |
+| sensor_377 | -0.2049 | 0.0851 | -0.144 to +0.310 | 0.4636 | 0.9272 | False | 0.3446 |
+| sensor_469 | 0.2008 | -0.0347 | -0.220 to +0.174 | 0.7657 | 0.9483 | False | 0.1143 |
+| sensor_351 | 0.1998 | -0.1390 | -0.339 to +0.069 | 0.2333 | 0.6374 | False | -0.3888 |
+| sensor_460 | 0.1979 | -0.0071 | -0.227 to +0.225 | 0.9515 | 0.9929 | False | -0.0924 |
+| sensor_213 | 0.1941 | -0.1316 | -0.329 to +0.064 | 0.2589 | 0.6374 | False | -0.3829 |
+| sensor_125 | -0.1938 | -0.1355 | -0.358 to +0.092 | 0.2451 | 0.6374 | False | 0.3042 |
+| sensor_152 | 0.1928 | 0.0354 | -0.221 to +0.264 | 0.7618 | 0.9483 | False | -0.1497 |
+| sensor_040 | -0.1911 | -0.1463 | -0.367 to +0.074 | 0.2095 | 0.6374 | False | 0.4538 |
+| sensor_468 | -0.1897 | -0.0273 | -0.236 to +0.172 | 0.8139 | 0.9483 | False | 0.3623 |
+| sensor_127 | -0.1851 | -0.1461 | -0.346 to +0.062 | 0.2103 | 0.6374 | False | 0.2513 |
+| sensor_128 | 0.1831 | -0.1049 | -0.375 to +0.159 | 0.3682 | 0.7855 | False | -0.1145 |
+| sensor_287 | 0.1826 | 0.0551 | -0.194 to +0.286 | 0.6363 | 0.9483 | False | -0.1529 |
+| sensor_112__notmeasured | -0.1753 | 0.0372 | -0.119 to +0.166 | 0.6383 | 0.9483 | False | 0.2449 |
 
 ## 6. What this means for the project
 

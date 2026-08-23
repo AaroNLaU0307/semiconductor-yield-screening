@@ -102,6 +102,60 @@ def threshold_grid(profile: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
+#: Robust outlier threshold, in scaled median absolute deviations from the median.
+#: 5 is deliberately conservative: at a normal distribution it flags roughly 6 in a
+#: million, so anything it catches here is genuinely far out rather than merely tailed.
+OUTLIER_MAD_THRESHOLD = 5.0
+MAD_TO_SIGMA = 1.4826
+
+
+def outlier_profile(X: pd.DataFrame) -> pd.DataFrame:
+    """Per sensor robust outlier counts. Detection only: nothing is removed.
+
+    Median and MAD are used rather than mean and standard deviation because both of
+    the latter are themselves distorted by the outliers being looked for, so a mean
+    based rule finds fewer outliers precisely when there are more of them.
+
+    Sensors whose MAD is zero have no robust scale, which happens when more than half
+    the values are identical. They are counted separately rather than being assigned an
+    infinite score.
+    """
+    rows = []
+    for col in X.columns:
+        values = X[col].dropna().to_numpy()
+        if values.size == 0:
+            continue
+        median = float(np.median(values))
+        mad = float(np.median(np.abs(values - median))) * MAD_TO_SIGMA
+        if mad <= 0:
+            rows.append(
+                {
+                    "sensor": col,
+                    "median": median,
+                    "robust_scale": 0.0,
+                    "n_outliers": 0,
+                    "outlier_share": 0.0,
+                    "max_robust_z": np.nan,
+                    "no_robust_scale": True,
+                }
+            )
+            continue
+        robust_z = np.abs(values - median) / mad
+        n_out = int((robust_z > OUTLIER_MAD_THRESHOLD).sum())
+        rows.append(
+            {
+                "sensor": col,
+                "median": median,
+                "robust_scale": mad,
+                "n_outliers": n_out,
+                "outlier_share": n_out / values.size,
+                "max_robust_z": float(robust_z.max()),
+                "no_robust_scale": False,
+            }
+        )
+    return pd.DataFrame(rows).set_index("sensor")
+
+
 def split_preview(timestamp: pd.Series, y: pd.Series, fraction: float) -> dict:
     """Describe the chronological split that DECISIONS.md will freeze."""
     n = len(timestamp)
@@ -441,7 +495,47 @@ def build_report(summary: dict, tables: dict) -> str:
     )
     parts.append("")
 
-    parts.append("## 8. Raw file checksums\n")
+    parts.append("## 8. Outliers, detected and reported but never removed\n")
+    parts.append(
+        "Detection uses the **median and the median absolute deviation**, not the mean "
+        "and standard deviation. Both of the latter are themselves distorted by the "
+        "outliers being looked for, so a mean based rule finds fewer outliers exactly "
+        "when there are more of them. A value is flagged when it lies more than "
+        f"{OUTLIER_MAD_THRESHOLD:.0f} scaled MADs from its sensor's median, which at a "
+        "normal distribution would flag roughly six values per million.\n"
+    )
+    parts.append("Measured on the train partition:\n")
+    parts.append(md_table(tables["outlier_summary"]))
+    parts.append(
+        "\nSensors carrying the most extreme single values:\n"
+    )
+    parts.append(md_table(tables["outlier_worst"]))
+    parts.append(
+        "\n**Nothing is removed, winsorised, or clipped.** Deleting an inconvenient "
+        "reading from process data destroys the evidence that a tool did something "
+        "unusual, and an excursion is often the most informative record in the set. "
+        "The outliers are instead handled by choosing methods that tolerate them:\n"
+    )
+    parts.append(
+        "\n- The screen uses a **rank based** test (Mann-Whitney U), so a value at a "
+        "robust z of six figures contributes exactly one rank, the same as any other "
+        "high value. A t-test on this data would be dominated by a handful of cells.\n"
+        "- Imputation uses the **train median**, not the mean, for the same reason.\n"
+        "- The effect size is **rank-biserial**, which is scale free and bounded, so "
+        "no single reading can inflate it.\n"
+        "- SPC is the one place this bites, and it is stated there: I-MR limits assume "
+        "approximate normality, which these distributions do not satisfy, so those "
+        "limits are treated as a screening heuristic rather than a calibrated alarm "
+        "rate (see `reports/spc.md`).\n"
+    )
+    parts.append(
+        "\nSensors with no robust scale are those where more than half the values are "
+        "identical, so the MAD is zero and no multiple of it is meaningful. They are "
+        "counted separately above rather than being assigned an infinite score, and "
+        "most of them are removed anyway by the constant and near constant drop rules "
+        "in section 6.\n"
+    )
+    parts.append("## 9. Raw file checksums\n")
     parts.append(
         md_table(
             pd.DataFrame(
@@ -475,6 +569,50 @@ def main() -> int:
     # holdout record influences which sensors enter the screen.
     n_train = int(np.floor(n * TRAIN_FRACTION))
     grid_train = threshold_grid(column_profile(X.iloc[:n_train]))
+
+    outliers = outlier_profile(X.iloc[:n_train])
+    scalable = outliers[~outliers["no_robust_scale"]]
+    outlier_summary = pd.DataFrame(
+        [
+            {"property": "sensors profiled on train", "value": len(outliers)},
+            {
+                "property": "sensors with no robust scale (MAD is zero)",
+                "value": int(outliers["no_robust_scale"].sum()),
+            },
+            {
+                "property": "sensors with at least one flagged value",
+                "value": f"{int((scalable['n_outliers'] > 0).sum())} of {len(scalable)}",
+            },
+            {
+                "property": "flagged cells in total",
+                "value": int(scalable["n_outliers"].sum()),
+            },
+            {
+                "property": "median per-sensor flagged share",
+                "value": f"{scalable['outlier_share'].median():.5f}",
+            },
+            {
+                "property": "worst per-sensor flagged share",
+                "value": f"{scalable['outlier_share'].max():.4f}",
+            },
+            {
+                "property": "largest robust z anywhere in train",
+                "value": f"{scalable['max_robust_z'].max():,.0f}",
+            },
+        ]
+    )
+    outlier_worst = (
+        scalable.sort_values("max_robust_z", ascending=False)
+        .head(8)[["n_outliers", "outlier_share", "max_robust_z"]]
+        .reset_index()
+        .rename(
+            columns={
+                "n_outliers": "flagged values",
+                "outlier_share": "share of readings",
+                "max_robust_z": "largest robust z",
+            }
+        )
+    )
 
     patterns = pattern_discovery_table()
     pattern_association = pattern_failure_association(
@@ -547,6 +685,8 @@ def main() -> int:
 
     tables = {
         "months": months,
+        "outlier_summary": outlier_summary,
+        "outlier_worst": outlier_worst,
         "patterns": patterns,
         "pattern_association": pattern_association,
         "missing_quantiles": missing_quantiles,

@@ -41,12 +41,27 @@ tabulated for the six most affected sensors in
 
 ### 2. Two features survive the change of period
 
-Under the same BH control at q = 0.10, applied to the holdout:
+BH at q = 0.10 applied to the holdout, over the family of the **32 shortlisted
+features** rather than the original 424:
 
-| feature | train effect | holdout effect | holdout BH adjusted p |
-| --- | --- | --- | --- |
-| `sensor_103` | +0.294 | +0.430 | 0.0073 |
-| `sensor_510` | +0.240 | +0.339 | 0.0587 |
+| feature | train effect | holdout effect | holdout 95 pct interval | holdout BH adjusted p |
+| --- | --- | --- | --- | --- |
+| `sensor_103` | +0.294 | +0.430 | +0.211 to +0.640 | 0.0073 |
+| `sensor_510` | +0.240 | +0.339 | +0.125 to +0.539 | 0.0587 |
+
+Both intervals exclude zero. They are stratified bootstrap percentile intervals, 2000
+resamples, the same standard [DECISIONS.md](DECISIONS.md) D10 already applies to PR-AUC,
+and they are wide because 26 holdout failures cannot support anything narrower. For
+scale: testing the same 32 uncorrected at alpha = 0.05 would yield about 1.6 by chance,
+which is why the correction is applied rather than raw p-values quoted.
+
+**Neither is contaminated by the sampling bias described below.** Both are dense band
+sensors measured on 99.9 percent of train lots and 99.8 percent of holdout lots, so
+neither is drawn from a sampled subpopulation. More decisively, the association survives
+holding each failure associated sampling plan fixed: recomputed within every stratum of
+both plans, all eight strata keep the same sign (+0.22 to +0.57 for `sensor_103`, +0.29
+to +0.56 for `sensor_510`). Sampling bias is excluded as the explanation, not merely
+argued to be inapplicable.
 
 These are the project's positive output: the two candidates worth a process engineer's
 time, because they are the only ones that held up when the time period changed.
@@ -83,7 +98,22 @@ anything. The declared result is reported as specified rather than quietly repla
 flaw is attributed to the declaration, and a full severity sweep is added as a labelled
 post-hoc diagnostic. See [reports/spc.md](reports/spc.md).
 
-### 5. The caveat on all of it
+### 5. Which lots were measured is itself associated with whether they failed
+
+Grouping the 52 sparsely measured sensors by their exact missing or present vector
+recovers **8 distinct metrology sampling plans**, and **2 of those 8 clear the same FDR
+threshold as the sensors themselves**: `sensor_072__notmeasured` (r = -0.216, adjusted
+p = 0.0122) and `sensor_112__notmeasured` (r = -0.175, adjusted p = 0.0359). Lots that
+were measured on those steps failed at roughly 9 percent against 3 to 4 percent for lots
+that were not.
+
+This is a **sampling bias finding, not a sensor finding**: it says something about how
+lots were routed and selected for measurement, not about a process parameter. It is
+reported because concealing it would protect a tidier narrative, and because any sensor
+shortlisted from that same measured subpopulation would inherit the concern. Finding 2
+discharges that concern for the two features that matter.
+
+### 6. The caveat on all of it
 
 The holdout contains **26 failures**. Every holdout number here carries a wide interval,
 and this is weak evidence of no effect rather than evidence of no effect.
@@ -142,6 +172,22 @@ Two of those patterns are themselves associated with failure under the same FDR 
 That is a **sampling bias finding, not a sensor finding**: which lots were measured is
 associated with whether they failed, and any sensor shortlisted from those same lots
 inherits the concern.
+
+### Outliers, detected and reported but never removed
+
+Detection is robust: a value is flagged when it lies more than 5 scaled median absolute
+deviations from its sensor's median, since a mean and standard deviation rule finds
+fewer outliers exactly when there are more of them. On train, **343 of the 457 sensors
+that have a robust scale carry at least one flagged value**, 8351 cells in total, and
+the most extreme sits at a robust z of about **199,000**.
+
+Nothing is removed, winsorised or clipped. Deleting an inconvenient reading from process
+data destroys the evidence that a tool did something unusual. They are handled instead
+by choosing methods that tolerate them, which is why the screen is rank based, the
+imputation uses the median, and the effect size is rank-biserial: a value 199,000 robust
+deviations out contributes exactly one rank. SPC is the one place this bites, and
+`reports/spc.md` says so. Full detail in
+[reports/data_quality.md](reports/data_quality.md).
 
 ### Screening, SPC and the model
 
@@ -305,8 +351,10 @@ statistics against the pandas implementation, sensor by sensor.
 On pure noise across 100 fixed seeds, the screen produced at least one survivor in 4
 percent of runs, against a theoretical BH bound of 10 percent.
 
-CI also fails the build if any non-ASCII character appears anywhere in the repository,
-which subsumes this project's ban on the em dash.
+CI also fails the build on this project's banned typography: the em dash, plus the
+look-alikes that fail the same way (a U+2212 minus sign is indistinguishable from a
+hyphen and stops being a number when pasted into code). Other non-ASCII characters, such
+as a diacritic in a cited author's name, are allowed.
 
 ## Licence
 
