@@ -1061,7 +1061,28 @@ def phase_5_replication(
             table["time correlation on train"].abs().median()
         ),
     }
-    write_replication_report(table, stats_summary)
+    # Monthly means for the most strongly time trending shortlisted sensors, from
+    # sql/monthly_sensor_means.sql. This is what makes the drift concrete rather than
+    # inferred: a sensor whose level marches across the months in step with the failure
+    # rate will look associated inside any window that contains the trend.
+    by_trend = table.reindex(
+        table["time correlation on train"].abs().sort_values(ascending=False).index
+    )["feature"].tolist()
+    # The prose singles out the largest effect sensor as the clearest case, so it is
+    # always charted even when it is not among the five strongest trends. A report
+    # whose table omits the example its own text discusses is a defect.
+    largest_effect = table.reindex(
+        table["train effect"].abs().sort_values(ascending=False).index
+    )["feature"].iloc[0]
+    drifting = by_trend[:5]
+    if largest_effect not in drifting:
+        drifting.append(largest_effect)
+    monthly = wh.monthly_sensor_means(drifting)
+    monthly_wide = monthly.pivot(
+        index="sensor_id", columns="month", values="mean_value"
+    ).reset_index()
+
+    write_replication_report(table, stats_summary, monthly_wide, drifting)
     (DASHBOARD / "replication_data.json").write_text(
         json.dumps(
             {"summary": stats_summary, "features": table.to_dict(orient="records")},
@@ -1072,7 +1093,12 @@ def phase_5_replication(
     return table, stats_summary
 
 
-def write_replication_report(table: pd.DataFrame, summary: dict) -> None:
+def write_replication_report(
+    table: pd.DataFrame,
+    summary: dict,
+    monthly_wide: pd.DataFrame,
+    drifting: list[str],
+) -> None:
     replicating = table[table["replicates"]].sort_values(
         "holdout BH adjusted p", kind="stable"
     )
@@ -1189,6 +1215,16 @@ def write_replication_report(table: pd.DataFrame, summary: dict) -> None:
         "mean falls steadily across the four months of the record, in the same "
         "direction as the failure rate. Nothing about that pattern requires the sensor "
         "to influence yield.\n",
+        "\nMonthly mean of the most strongly time trending shortlisted sensors, plus "
+        "the largest effect sensor discussed above, from "
+        f"`sql/monthly_sensor_means.sql` ({len(drifting)} sensors). Read it against the "
+        "monthly failure rate in DECISIONS.md D0, which runs 0.2222, 0.0919, 0.0288, "
+        "0.0613 over the same months:\n",
+        md_table(monthly_wide),
+        "\nThese are the sensors whose level marches across the record. A univariate "
+        "test computed inside a window that contains both trends will report a strong "
+        "association for reasons that have nothing to do with the process, which is "
+        "the mechanism behind section 2.\n",
         "\n## 5. Full table\n",
         "`time correlation on train` is the Spearman correlation between the feature "
         "and record order, computed on train and without reference to the label.\n",

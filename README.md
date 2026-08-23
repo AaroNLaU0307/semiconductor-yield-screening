@@ -33,9 +33,11 @@ trend across a window, a test computed inside that window sees a strong associat
 whether or not either has anything to do with the other.
 
 The clearest case is the top ranked sensor, `sensor_059`: train effect +0.51, holdout
-effect -0.05, and its own monthly mean falls 12.2, 7.1, 0.2, -0.6 across the four
+effect -0.05, and its own monthly mean falls 12.20, 7.14, 0.19, -0.59 across the four
 months, in the same direction as the failure rate. Nothing in that pattern requires it
-to influence yield.
+to influence yield. Those monthly means come from `sql/monthly_sensor_means.sql` and are
+tabulated for the six most affected sensors in
+[reports/replication.md](reports/replication.md).
 
 ### 2. Two features survive the change of period
 

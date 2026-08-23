@@ -42,6 +42,20 @@ The failure rate itself moves by a factor of seven across the collection window 
 The clearest single case is the top ranked sensor. Its train effect is the largest in the screen, its holdout effect is near zero, and its own monthly mean falls steadily across the four months of the record, in the same direction as the failure rate. Nothing about that pattern requires the sensor to influence yield.
 
 
+Monthly mean of the most strongly time trending shortlisted sensors, plus the largest effect sensor discussed above, from `sql/monthly_sensor_means.sql` (6 sensors). Read it against the monthly failure rate in DECISIONS.md D0, which runs 0.2222, 0.0919, 0.0288, 0.0613 over the same months:
+
+| sensor_id | 2008-07 | 2008-08 | 2008-09 | 2008-10 |
+| --- | --- | --- | --- | --- |
+| sensor_028 | 65.3543 | 67.2888 | 70.7593 | 71.5717 |
+| sensor_059 | 12.1956 | 7.1410 | 0.1893 | -0.5874 |
+| sensor_103 | -0.0068 | -0.0083 | -0.0109 | -0.0107 |
+| sensor_155 | 0.6529 | 0.4793 | 0.4296 | 0.6512 |
+| sensor_290 | 0.1937 | 0.1210 | 0.1054 | 0.1443 |
+| sensor_428 | 5.5022 | 3.8341 | 3.5079 | 5.7535 |
+
+These are the sensors whose level marches across the record. A univariate test computed inside a window that contains both trends will report a strong association for reasons that have nothing to do with the process, which is the mechanism behind section 2.
+
+
 ## 5. Full table
 
 `time correlation on train` is the Spearman correlation between the feature and record order, computed on train and without reference to the label.
