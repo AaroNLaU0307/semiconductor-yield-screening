@@ -26,7 +26,8 @@ sys.path.insert(0, str(REPO_ROOT))
 from sklearn.metrics import average_precision_score, precision_recall_curve  # noqa: E402
 
 from yield_screening import config  # noqa: E402
-from yield_screening.data_io import load_secom, verify_checksums  # noqa: E402
+from yield_screening import warehouse as wh  # noqa: E402
+from yield_screening.data_io import verify_checksums  # noqa: E402
 from yield_screening.modeling import (  # noqa: E402
     associational_importance,
     cost_sweep,
@@ -227,6 +228,30 @@ def write_screening_report(screen, perm, pre: Preprocessor, y_train: np.ndarray)
     ]
 
     (REPORTS / "screening.md").write_text("\n".join(parts), encoding="utf-8")
+
+    # The 8 missingness patterns are the output of an unsupervised discovery step over
+    # the missingness matrix, so they are emitted as a first class artifact with their
+    # coverage and their FDR controlled association result attached.
+    screen_by_feature = screen.table.set_index("feature")
+    patterns = []
+    for group in pre.indicator_groups:
+        row = screen_by_feature.loc[group.column_name]
+        patterns.append(
+            {
+                "pattern": group.column_name,
+                "representative": group.representative,
+                "n_sensors": len(group.members),
+                "members": list(group.members),
+                "train_missing_rate": group.train_missing_rate,
+                "train_coverage": 1.0 - group.train_missing_rate,
+                "effect_size": float(row["effect_size_rank_biserial"]),
+                "p_bh_adjusted": float(row["p_bh_adjusted"]),
+                "survives_fdr": bool(row["survives_fdr"]),
+            }
+        )
+    (DASHBOARD / "patterns_data.json").write_text(
+        json.dumps(patterns, indent=2), encoding="utf-8"
+    )
 
     payload = {
         "n_tested": screen.n_tested,
@@ -1037,6 +1062,13 @@ def phase_5_replication(
         ),
     }
     write_replication_report(table, stats_summary)
+    (DASHBOARD / "replication_data.json").write_text(
+        json.dumps(
+            {"summary": stats_summary, "features": table.to_dict(orient="records")},
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
     return table, stats_summary
 
 
@@ -1213,8 +1245,13 @@ def write_timeline_data(timestamp: pd.Series, y: np.ndarray, split) -> None:
 
 
 def main() -> int:
+    # Provenance first: the raw file checksums are verified, then the warehouse is
+    # built from that verified parse. The pipeline reads from the database because that
+    # is where process data lives. tests/test_warehouse.py asserts the warehouse loader
+    # returns data identical to the raw loader, so the raw files stay the anchor.
     verify_checksums()
-    data = load_secom()
+    wh.ensure_warehouse()
+    data = wh.load_secom_from_warehouse()
     split = chronological_split(data.timestamp, config.TRAIN_FRACTION)
 
     X_train_raw = data.X.iloc[split.train_idx]

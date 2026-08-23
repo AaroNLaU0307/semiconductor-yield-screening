@@ -12,3 +12,9 @@ dist/
 Thumbs.db
 .coverage
 htmlcov/
+
+# The warehouse is generated from the committed raw files by
+# yield_screening/warehouse.py and is rebuilt on demand, so it is not committed.
+# It is 42 MB of derived data whose every byte is reproducible from data/raw.
+data/*.duckdb
+data/*.duckdb.wal

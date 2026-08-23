@@ -679,3 +679,61 @@ credible than one that names them.
    the process moved and the associations did not transfer, emerged from comparing three
    reports. It deserved to be a planned measurement rather than a synthesis after the
    fact.
+
+## A5. Storage layer added after Gate 1, on 2026-08-23
+
+**Added after Gate 1 and after the results were known. It changed no reported number,
+and that claim is enforced by tests rather than asserted.**
+
+The pipeline now reads process data from a local DuckDB warehouse built from the two
+raw files, rather than parsing them directly. Queries live in `sql/`.
+
+**Why.** Fab process data lives in a database. A yield analyst's work starts with a
+query against a warehouse, not with a file read, so a pipeline that begins with
+`read_csv` models the wrong workflow. Reading from a database is a more faithful model
+of how this analysis would actually be done.
+
+**DuckDB rather than SQLite.** The access pattern here is an analytical scan across 590
+sensor columns, which is what a column store is built for. It installs with pip and
+needs no server, so a reviewer can clone the repository and run one command.
+
+**Long form rather than wide.** Measurements are stored as `(record_id, sensor_id,
+value)`, one row per cell, 1567 lots by 590 sensors. That is how sensor data is
+warehoused, it makes coverage and missingness natural aggregations rather than contorted
+column scans, and adding a sensor becomes an insert rather than a schema migration. The
+full grid is stored with NULL for unmeasured cells, so the long form round trips back to
+the wide matrix exactly. A production warehouse would often omit unmeasured cells
+entirely; that would be more compact and would make the round trip lossy, and lossless
+was the priority here.
+
+**Division of labour, fixed.** SQL does extraction, filtering and aggregation. Python
+does inference. There is no Mann-Whitney U and no BH correction in SQL, because
+expressing them there would be a demonstration rather than an improvement.
+
+**What moved into SQL.** Per sensor missing rate and coverage on train; constant and
+near constant detection; duplicate detection by value vector fingerprint; the distinct
+missingness patterns among sparse sensors; monthly failure rate and monthly per sensor
+means; and the train/holdout boundary, which is now a query over a window function
+rather than an array slice.
+
+**What did not move, and why.** The fitted `Preprocessor` keeps its pandas
+implementation. It is the fitted transform, it must remain independently testable, and
+the pipeline must not require a database to apply a stored median. Keeping both is also
+what makes the equality test possible: `tests/test_warehouse.py` asserts that the SQL
+drop rules produce the same verdict, the same drop reason, and bit identical statistics
+for all 590 sensors, and that data read back from the warehouse is bit identical to the
+raw parse. The threshold sensitivity grid in `reports/data_quality.md` also stayed in
+pandas, since it is exploratory and was not among the computations this change targeted.
+
+**Provenance is unchanged.** The raw file checksums are verified before the warehouse is
+built, and values are copied from the parsed frame rather than reparsed from text, so a
+value in the database is bit identical to the value the original loader produced. The
+database itself is not committed: it is 42 MB of derived data, every byte reproducible
+from `data/raw`, and it is rebuilt on demand.
+
+**Evidence that nothing moved.** After the pipeline was switched to read from the
+warehouse, `reports/screening.md`, `reports/spc.md`, `reports/model.md`,
+`reports/replication.md`, `reports/screening_table.csv` and `reports/doe_proposal.md`
+were byte identical to their previous versions. `reports/data_quality.md` gained a new
+section on the missingness pattern discovery and its section numbering shifted; every
+pre-existing line of it is unchanged.

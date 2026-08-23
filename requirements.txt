@@ -3,6 +3,11 @@ pandas>=2.1
 scipy>=1.11
 scikit-learn>=1.4
 plotly>=5.20
+
+# The pipeline reads process data from a local DuckDB warehouse rather than from
+# flat files, because that is where fab process data actually lives. SQL does
+# extraction, filtering and aggregation; Python does inference.
+duckdb>=1.0
 pytest>=8.0
 
 # Test only. tests/test_screening_math.py checks this project's Benjamini-Hochberg

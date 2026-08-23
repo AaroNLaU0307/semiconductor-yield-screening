@@ -20,7 +20,8 @@ import pandas as pd
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT))
 
-from yield_screening.data_io import file_checksums, load_secom  # noqa: E402
+from yield_screening import warehouse as wh  # noqa: E402
+from yield_screening.data_io import file_checksums  # noqa: E402
 from yield_screening.reporting import md_table  # noqa: E402
 
 REPORT_MD = REPO_ROOT / "reports" / "data_quality.md"
@@ -124,12 +125,84 @@ def split_preview(timestamp: pd.Series, y: pd.Series, fraction: float) -> dict:
 
 
 def monthly_table(timestamp: pd.Series, y: pd.Series) -> pd.DataFrame:
+    """Reference pandas implementation, retained as the check on the SQL version."""
     frame = pd.DataFrame(
         {"month": timestamp.dt.to_period("M").astype(str), "y": y.to_numpy()}
     )
     table = frame.groupby("month")["y"].agg(records="size", fails="sum")
     table["fail_rate"] = table["fails"] / table["records"]
     return table.reset_index()
+
+
+def monthly_table_sql() -> pd.DataFrame:
+    """Monthly failure rate from `sql/monthly_failure_rate.sql`.
+
+    Column names and integer dtypes are normalised to match the pandas reference
+    exactly, so switching the source changed no rendered value.
+    """
+    frame = wh.monthly_failure_rate().rename(
+        columns={"n_records": "records", "n_fail": "fails"}
+    )
+    frame["records"] = frame["records"].astype(int)
+    frame["fails"] = frame["fails"].astype(int)
+    return frame[["month", "records", "fails", "fail_rate"]]
+
+
+def pattern_discovery_table() -> pd.DataFrame:
+    """Distinct missingness patterns among sparse band sensors, from SQL."""
+    patterns = wh.missingness_patterns()
+    return pd.DataFrame(
+        {
+            "pattern": [f"{r}__notmeasured" for r in patterns["representative"]],
+            "sensors in pattern": patterns["n_sensors"].astype(int),
+            "train coverage": patterns["train_coverage"].astype(float),
+            "members": [
+                ", ".join(list(m))
+                if len(m) <= 6
+                else ", ".join(list(m)[:6]) + f", and {len(m) - 6} more"
+                for m in patterns["members"]
+            ],
+        }
+    )
+
+
+def pattern_failure_association(
+    patterns: pd.DataFrame, X_train: pd.DataFrame, y_train: np.ndarray
+) -> pd.DataFrame:
+    """Is pattern membership itself associated with failure? Train only, descriptive.
+
+    A sensor measured on only a minority of lots usually reflects a metrology sampling
+    plan. If the plan correlates with failure, that is a sampling bias finding rather
+    than a sensor finding, and it is worth reporting either way.
+
+    These figures are descriptive and use the train partition only. The authoritative,
+    FDR controlled test of the same question is in `reports/screening.md`, where each
+    pattern enters the 424 test screening family on equal footing with the sensor
+    values.
+    """
+    rows = []
+    for _, row in patterns.iterrows():
+        representative = row["pattern"].replace("__notmeasured", "")
+        not_measured = X_train[representative].isna().to_numpy()
+        measured = ~not_measured
+        rows.append(
+            {
+                "pattern": row["pattern"],
+                "lots measured": int(measured.sum()),
+                "lots not measured": int(not_measured.sum()),
+                "fail rate when measured": float(y_train[measured].mean())
+                if measured.any()
+                else float("nan"),
+                "fail rate when not measured": float(y_train[not_measured].mean())
+                if not_measured.any()
+                else float("nan"),
+            }
+        )
+    frame = pd.DataFrame(rows)
+    frame["difference"] = (
+        frame["fail rate when measured"] - frame["fail rate when not measured"]
+    )
+    return frame
 
 
 def build_report(summary: dict, tables: dict) -> str:
@@ -278,7 +351,43 @@ def build_report(summary: dict, tables: dict) -> str:
     parts.append(tables["duplicate_lines"])
     parts.append("")
 
-    parts.append("## 5. Effect of candidate drop rules\n")
+    parts.append("## 5. Unsupervised structure in the missingness matrix\n")
+    parts.append(
+        "The sparse band sensors are not measured on every lot. Grouping them by their "
+        "exact missing or present vector asks whether those absences are independent "
+        "per sensor, or whether sensors are measured together in blocks.\n"
+    )
+    parts.append(
+        "They are measured in blocks. The sparse sensors collapse to a small number of "
+        "distinct patterns, which is the signature of **metrology sampling plans**, "
+        "where not every lot is measured on every tool, rather than of sensors failing "
+        "independently at random.\n"
+    )
+    parts.append(
+        "This is unsupervised structure discovery over the missingness matrix, done by "
+        "exact grouping rather than by a clustering algorithm. Exact grouping is the "
+        "correct method here because the patterns are exact: imposing a distance metric "
+        "would turn an exact answer into an approximate one. The query is "
+        "`sql/missingness_patterns.sql`.\n"
+    )
+    parts.append(md_table(tables["patterns"]))
+    parts.append("\n### Is pattern membership itself associated with failure?\n")
+    parts.append(
+        "Worth asking on its merits. If a sampling plan correlates with the failure "
+        "rate, that is a **sampling bias finding, not a sensor finding**, and it should "
+        "be reported either way.\n"
+    )
+    parts.append(md_table(tables["pattern_association"]))
+    parts.append(
+        "\nThese figures are descriptive and computed on the train partition only. The "
+        "authoritative test is in `reports/screening.md`, where each pattern enters the "
+        "screening family on equal footing with the sensor values and is corrected for "
+        "multiplicity alongside them. Two patterns clear that FDR threshold, so the "
+        "answer is yes: which lots were measured is associated with whether they "
+        "failed. That is a property of how the data was collected, and any sensor "
+        "shortlisted from those same lots inherits the concern.\n"
+    )
+    parts.append("## 6. Effect of candidate drop rules\n")
     parts.append(
         "Surviving sensor count under combinations of a missing-rate ceiling and a "
         "modal-share ceiling. All-missing and constant sensors are dropped in every "
@@ -296,7 +405,7 @@ def build_report(summary: dict, tables: dict) -> str:
     parts.append("")
 
     parts.append(
-        f"## 6. Chronological split preview at {TRAIN_FRACTION:.0%}\n"
+        f"## 7. Chronological split preview at {TRAIN_FRACTION:.0%}\n"
     )
     parts.append(
         md_table(
@@ -332,7 +441,7 @@ def build_report(summary: dict, tables: dict) -> str:
     )
     parts.append("")
 
-    parts.append("## 7. Raw file checksums\n")
+    parts.append("## 8. Raw file checksums\n")
     parts.append(
         md_table(
             pd.DataFrame(
@@ -348,7 +457,11 @@ def build_report(summary: dict, tables: dict) -> str:
 
 
 def main() -> int:
-    data = load_secom()
+    # The pipeline reads from the warehouse. `tests/test_warehouse.py` asserts this
+    # returns data identical to the raw loader, so the raw files remain the provenance
+    # anchor while the database is the working source.
+    wh.ensure_warehouse()
+    data = wh.load_secom_from_warehouse()
     X, y, timestamp = data.X, data.y, data.timestamp
     n, n_sensors = X.shape
 
@@ -356,12 +469,17 @@ def main() -> int:
     duplicates = duplicate_column_groups(X)
     grid = threshold_grid(profile)
     split = split_preview(timestamp, y, TRAIN_FRACTION)
-    months = monthly_table(timestamp, y)
+    months = monthly_table_sql()
 
     # The drop thresholds in DECISIONS.md are justified on train alone, so that no
     # holdout record influences which sensors enter the screen.
     n_train = int(np.floor(n * TRAIN_FRACTION))
     grid_train = threshold_grid(column_profile(X.iloc[:n_train]))
+
+    patterns = pattern_discovery_table()
+    pattern_association = pattern_failure_association(
+        patterns, X.iloc[:n_train], y.to_numpy()[:n_train]
+    )
 
     row_missing = X.isna().sum(axis=1) / n_sensors
     gaps = timestamp.diff().dropna()
@@ -429,6 +547,8 @@ def main() -> int:
 
     tables = {
         "months": months,
+        "patterns": patterns,
+        "pattern_association": pattern_association,
         "missing_quantiles": missing_quantiles,
         "worst_missing": worst_missing,
         "grid": grid,

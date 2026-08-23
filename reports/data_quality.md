@@ -96,7 +96,43 @@ Duplicate sensor groups (identical values including the missing pattern):
 - sensor_190, sensor_191, sensor_192, sensor_193, sensor_194, sensor_326, sensor_327, sensor_328, sensor_329, sensor_330, sensor_462, sensor_463, sensor_464, sensor_465, sensor_466
 - sensor_256, sensor_257, sensor_258, sensor_259, sensor_260, sensor_261, sensor_262, sensor_263, sensor_264, sensor_265, sensor_266, sensor_394, sensor_395, sensor_396, sensor_397, sensor_398, sensor_399, sensor_400, sensor_401, sensor_402, sensor_403, sensor_404, sensor_528, sensor_529, sensor_530, sensor_531, sensor_532, sensor_533, sensor_534, sensor_535, sensor_536, sensor_537, sensor_538
 
-## 5. Effect of candidate drop rules
+## 5. Unsupervised structure in the missingness matrix
+
+The sparse band sensors are not measured on every lot. Grouping them by their exact missing or present vector asks whether those absences are independent per sensor, or whether sensors are measured together in blocks.
+
+They are measured in blocks. The sparse sensors collapse to a small number of distinct patterns, which is the signature of **metrology sampling plans**, where not every lot is measured on every tool, rather than of sensors failing independently at random.
+
+This is unsupervised structure discovery over the missingness matrix, done by exact grouping rather than by a clustering algorithm. Exact grouping is the correct method here because the patterns are exact: imposing a distance metric would turn an exact answer into an approximate one. The query is `sql/missingness_patterns.sql`.
+
+| pattern | sensors in pattern | train coverage | members |
+| --- | --- | --- | --- |
+| sensor_072__notmeasured | 4 | 0.5557 | sensor_072, sensor_073, sensor_345, sensor_346 |
+| sensor_085__notmeasured | 4 | 0.0995 | sensor_085, sensor_220, sensor_358, sensor_492 |
+| sensor_109__notmeasured | 12 | 0.1597 | sensor_109, sensor_110, sensor_111, sensor_244, sensor_245, sensor_246, and 6 more |
+| sensor_112__notmeasured | 4 | 0.6962 | sensor_112, sensor_247, sensor_385, sensor_519 |
+| sensor_157__notmeasured | 4 | 0.0894 | sensor_157, sensor_158, sensor_292, sensor_293 |
+| sensor_546__notmeasured | 12 | 0.7682 | sensor_546, sensor_547, sensor_548, sensor_549, sensor_550, sensor_551, and 6 more |
+| sensor_562__notmeasured | 8 | 0.7527 | sensor_562, sensor_563, sensor_564, sensor_565, sensor_566, sensor_567, and 2 more |
+| sensor_578__notmeasured | 4 | 0.3641 | sensor_578, sensor_579, sensor_580, sensor_581 |
+
+### Is pattern membership itself associated with failure?
+
+Worth asking on its merits. If a sampling plan correlates with the failure rate, that is a **sampling bias finding, not a sensor finding**, and it should be reported either way.
+
+| pattern | lots measured | lots not measured | fail rate when measured | fail rate when not measured | difference |
+| --- | --- | --- | --- | --- | --- |
+| sensor_072__notmeasured | 609 | 487 | 0.0969 | 0.0390 | 0.0579 |
+| sensor_085__notmeasured | 109 | 987 | 0.0550 | 0.0729 | -0.0179 |
+| sensor_109__notmeasured | 175 | 921 | 0.0400 | 0.0771 | -0.0371 |
+| sensor_112__notmeasured | 763 | 333 | 0.0878 | 0.0330 | 0.0548 |
+| sensor_157__notmeasured | 98 | 998 | 0.0510 | 0.0731 | -0.0221 |
+| sensor_546__notmeasured | 842 | 254 | 0.0713 | 0.0709 | 0.0004 |
+| sensor_562__notmeasured | 825 | 271 | 0.0667 | 0.0849 | -0.0182 |
+| sensor_578__notmeasured | 399 | 697 | 0.0877 | 0.0617 | 0.0260 |
+
+These figures are descriptive and computed on the train partition only. The authoritative test is in `reports/screening.md`, where each pattern enters the screening family on equal footing with the sensor values and is corrected for multiplicity alongside them. Two patterns clear that FDR threshold, so the answer is yes: which lots were measured is associated with whether they failed. That is a property of how the data was collected, and any sensor shortlisted from those same lots inherits the concern.
+
+## 6. Effect of candidate drop rules
 
 Surviving sensor count under combinations of a missing-rate ceiling and a modal-share ceiling. All-missing and constant sensors are dropped in every row of this table.
 
@@ -150,7 +186,7 @@ The same grid computed on the train partition alone. The thresholds fixed in DEC
 | 1.0000 | 0.9900 | 468 |
 | 1.0000 | 1.0000 | 468 |
 
-## 6. Chronological split preview at 70%
+## 7. Chronological split preview at 70%
 
 | property | value |
 | --- | --- |
@@ -164,7 +200,7 @@ The same grid computed on the train partition alone. The thresholds fixed in DEC
 | train fail rate | 0.0712 |
 | holdout fail rate | 0.0552 |
 
-## 7. Raw file checksums
+## 8. Raw file checksums
 
 | file | sha256 | bytes |
 | --- | --- | --- |

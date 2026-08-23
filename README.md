@@ -8,32 +8,27 @@ null, SPC control charts, and a cost aware predictive baseline.
 
 ## Headline findings
 
-**The predictive model does not work, and that is reported rather than dressed up.**
-Holdout PR-AUC is **0.062, with a 95 percent interval of 0.050 to 0.098**, against a
-no-skill floor of 0.055. The interval contains the floor. ROC-AUC is 0.539. This is not
-a working detector and should not be used as one.
+### 1. The screen finds real structure, and most of it is an artifact of time
 
-The cost sweep makes the same point without any statistics. Across every threshold from
-a 1 to 1 up to a 100 to 1 cost ratio, the best precision the model reaches is 0.069
-against a base failure rate of 0.055. It first achieves full recall at a 46 to 1 ratio,
-and it does so by flagging all 471 holdout lots, at which point precision equals the base
-rate exactly. The only way this model catches every failure is to stop discriminating.
+On the training period, **32 of 424 features cleared Benjamini-Hochberg at q = 0.10**,
+and the permutation null is decisive: across 2000 label permutations, 91.9 percent
+produced zero survivors, the null mean was 0.25 and the null maximum was 15, against an
+observed 32. **Permutation p = 0.0005.** Testing 424 correlated things at once does not
+explain the result.
 
-**The screen, however, found something real.** On the training period, **32 of 424
-features cleared Benjamini-Hochberg at q = 0.10**, and the permutation null is
-decisive: across 2000 label permutations, 91.9 percent produced zero survivors, the
-null mean was 0.25 and the null maximum was 15, against an observed 32
-(**permutation p = 0.0005**). The associations in the train period are not an artifact
-of testing 424 things at once.
+![Permutation null](docs/permutation_null.png)
 
-**Those two findings are not a contradiction, and the reconciliation is the actual
-result of this project: most of the associations are time local.** Recomputing the same
-effect sizes on the holdout period shows that of the 32 shortlisted features, only
-**15 keep the sign of their effect** (a coin gives 16), the median absolute effect size
-**falls by 63 percent** (0.210 to 0.077), and the correlation between train and holdout
-effect size is **0.216**. Meanwhile 16 of the 32 have a strong monotone trend with time
-on train. The failure rate also trends, falling from 22.2 percent in July 2008 to 2.9
-percent in September before rising to 6.1 percent in October. When two quantities both
+Recomputing those same effect sizes on the held out period tells a different story. Of
+the 32 shortlisted features, only **15 keep the sign of their effect** (a coin gives
+16), the median absolute effect size **falls by 63 percent** (0.210 to 0.077), and the
+correlation between train and holdout effect size is **0.216**.
+
+![Effect sizes do not transfer](docs/drift_scatter.png)
+
+The cause is **non-stationarity: the distribution shifts across the very window the
+model is fitted in.** The failure rate falls from 22.2 percent in July 2008 to 2.9
+percent in September before rising to 6.1 percent in October, and **16 of the 32
+shortlisted features carry a strong monotone trend with time**. When two quantities both
 trend across a window, a test computed inside that window sees a strong association
 whether or not either has anything to do with the other.
 
@@ -42,32 +37,54 @@ effect -0.05, and its own monthly mean falls 12.2, 7.1, 0.2, -0.6 across the fou
 months, in the same direction as the failure rate. Nothing in that pattern requires it
 to influence yield.
 
-**Two features do survive the change of period**, under the same BH control at q = 0.10:
-`sensor_103` (train +0.294, holdout +0.430, adjusted p 0.0073) and `sensor_510`
-(train +0.240, holdout +0.339, adjusted p 0.0587). Those are the two candidates worth an
-engineer's time, and confirming them would need a third time period this project has not
-touched. Full analysis in [reports/replication.md](reports/replication.md), which is
-labelled post-hoc because it was added after the model failed, not planned at Gate 1.
+### 2. Two features survive the change of period
 
-A study that had used random cross validation would have mixed those periods together,
-reported a respectable number, and found none of this.
+Under the same BH control at q = 0.10, applied to the holdout:
 
-**The SPC flags do not anticipate failures either.** Out of control records fail no more
-often than in control records, at every severity threshold under two rule sets, smallest
-BH adjusted p = 1.000.
+| feature | train effect | holdout effect | holdout BH adjusted p |
+| --- | --- | --- | --- |
+| `sensor_103` | +0.294 | +0.430 | 0.0073 |
+| `sensor_510` | +0.240 | +0.339 | 0.0587 |
 
-One honest caveat on all of it: the holdout contains **26 failures**. Every holdout
-number here carries a wide interval, and this is weak evidence of no effect rather than
-evidence of no effect.
+These are the project's positive output: the two candidates worth a process engineer's
+time, because they are the only ones that held up when the time period changed.
+Confirming them would need a third period this project has not touched. Full analysis in
+[reports/replication.md](reports/replication.md), labelled post-hoc because it was added
+after the model failed rather than planned at Gate 1.
 
-### A defect found in this project's own frozen design
+### 3. The predictive model does not work, which is how the drift was found
 
-The out of control flag frozen at Gate 1 defined a record as out of control if any
-applied Nelson rule fired on any charted sensor. Applied to ten sensors with per sensor
-flag rates of 3 to 60 percent, that flags **468 of 471** holdout records by construction
-and cannot discriminate anything. The declared result is reported as specified rather
-than quietly replaced, the flaw is attributed to the declaration, and a full severity
-sweep is added as a labelled post-hoc diagnostic. See [reports/spc.md](reports/spc.md).
+Holdout PR-AUC is **0.062, with a 95 percent interval of 0.050 to 0.098**, against a
+no-skill floor of 0.055. The interval contains the floor. ROC-AUC is 0.539. This is not
+a working detector and should not be used as one.
+
+The cost sweep makes the same point without any statistics. Across every threshold from
+a 1 to 1 up to a 100 to 1 cost ratio, the best precision the model reaches is 0.069
+against a base failure rate of 0.055. It first achieves full recall at a 46 to 1 ratio,
+and it does so by flagging all 471 holdout lots, at which point precision equals the
+base rate exactly. The only way this model catches every failure is to stop
+discriminating.
+
+A model that failed quietly would have ended the project. Asking why it failed is what
+produced finding 1.
+
+### 4. The SPC flags do not discriminate either
+
+Out of control records fail no more often than in control records, at every severity
+threshold under two rule sets, smallest BH adjusted p = 1.000.
+
+**A defect in this project's own frozen design.** The out of control flag frozen at
+Gate 1 defined a record as out of control if any applied Nelson rule fired on any
+charted sensor. Applied to ten sensors with per sensor flag rates of 3 to 60 percent,
+that flags **468 of 471** holdout records by construction and cannot discriminate
+anything. The declared result is reported as specified rather than quietly replaced, the
+flaw is attributed to the declaration, and a full severity sweep is added as a labelled
+post-hoc diagnostic. See [reports/spc.md](reports/spc.md).
+
+### 5. The caveat on all of it
+
+The holdout contains **26 failures**. Every holdout number here carries a wide interval,
+and this is weak evidence of no effect rather than evidence of no effect.
 
 ## Why this repository looks different from other SECOM analyses
 
@@ -87,15 +104,44 @@ Records are sorted by timestamp and split chronologically at 70 percent (1096 tr
 471 holdout, boundary 2008-09-26). Column drop rules, median imputation and the feature
 screen are all fitted on train only.
 
+### Where the data comes from
+
+The pipeline reads from a local **DuckDB** warehouse rather than from flat files,
+because that is where fab process data lives: a yield analyst's work starts with a query,
+not with a file read. The two raw files are landed into `data/secom.duckdb` in long form,
+one row per measured cell (`record_id`, `sensor_id`, `value`), which is how sensor data
+is actually warehoused and what makes coverage and missingness natural aggregations.
+
+The division of labour is deliberate: **SQL does extraction, filtering and aggregation;
+Python does inference.** Queries live in [`sql/`](sql/), one file per concern. There is
+no Mann-Whitney U or BH correction in SQL. `tests/test_warehouse.py` asserts that the
+SQL drop rules agree with the pandas implementation sensor by sensor, and that data read
+back from the warehouse is bit identical to the raw parse.
+
+### Missingness, and the structure hiding in it
+
 Sensors turn out to be either near-complete or catastrophically sparse, with **no sensor
 having a train missing rate between 2 percent and 20 percent**. That empty band is why
 the dense band ceiling is not a tunable parameter: any value inside it produces an
 identical partition. Dense sensors (416) keep their values and are median imputed.
 Sparse sensors (52) have their values dropped and contribute a binary not-measured
 indicator instead, because imputing a sensor observed for one lot in five manufactures a
-column that mostly carries the missingness pattern. Those 52 collapse to **8 distinct
-missingness patterns**, which look like metrology sampling plans, so 8 indicators are
-emitted rather than 52 duplicates.
+column that mostly carries the missingness pattern.
+
+Grouping those 52 sensors by their exact missing or present vector is **unsupervised
+structure discovery over the missingness matrix**, by exact grouping rather than by a
+clustering algorithm, because the patterns are exact. They collapse to **8 distinct
+patterns**, which is the signature of metrology sampling plans rather than of sensors
+failing independently.
+
+![Missingness patterns](docs/missingness_patterns.png)
+
+Two of those patterns are themselves associated with failure under the same FDR control.
+That is a **sampling bias finding, not a sensor finding**: which lots were measured is
+associated with whether they failed, and any sensor shortlisted from those same lots
+inherits the concern.
+
+### Screening, SPC and the model
 
 Each of the resulting 424 features is tested against the label with a two sided
 Mann-Whitney U test (tie corrected, because imputation creates large tie blocks),
@@ -120,6 +166,26 @@ before any holdout record was read; swapping it afterwards is model selection on
 evaluation set. ROC-AUC also ranks the two the other way round, and the intervals
 overlap, so the ordering is noise. Details in [reports/model.md](reports/model.md).
 
+## What the data physically represents
+
+SECOM records are **inline sensor measurements**, taken from process tools as lots run
+rather than from finished die. That matters for what a shortlisted sensor can mean. In a
+real flow, inline signals sit upstream of parametric (param) measurements taken on test
+structures at end of line, and further upstream still of probe results measured on the
+die themselves. An inline sensor associated with a pass or fail flag is separated from
+the electrical outcome by every step that follows it, so it is a candidate for
+investigation rather than a diagnosis.
+
+The 8 missingness patterns look like **metrology sampling plans**: not every lot is
+measured on every tool, because measurement costs throughput. Lots are sampled, and the
+sampling rule shows up in the data as a block of sensors that are all absent together.
+
+The drift in `sensor_059` has the shape a **tool drift or a chamber change** would
+produce: a level that moves steadily across months rather than jumping with a lot.
+Distinguishing that from a real yield relationship is not possible from observational
+records, which is exactly what [reports/doe_proposal.md](reports/doe_proposal.md) exists
+to specify.
+
 ## Dashboard
 
 ![Dashboard](docs/dashboard.png)
@@ -137,7 +203,7 @@ flagged, the ranked detractor table, and the precision-recall curve with the cho
 operating point.
 
 Panel 2 is worth a look even in the preview. The spread of `sensor_059` collapses around
-record 450 and never recovers, which is the drift in section one made visible on a single
+record 450 and never recovers, which is the drift in finding 1 made visible on a single
 sensor.
 
 ## Running it
@@ -150,14 +216,15 @@ python scripts/build_dashboard.py
 python scripts/build_doe_proposal.py
 ```
 
-The pipeline is deterministic: the same seed produces byte identical reports, which is
-enforced by a test that runs it twice and compares.
+The warehouse is built automatically on first run from the committed raw files, so no
+database setup is needed. The pipeline is deterministic: the same seed produces byte
+identical reports, which is enforced by a test that runs it twice and compares.
 
 ## Reports
 
 | report | contents |
 | --- | --- |
-| [reports/data_quality.md](reports/data_quality.md) | what the raw data actually contains, including the ugly parts |
+| [reports/data_quality.md](reports/data_quality.md) | what the raw data actually contains, including the ugly parts, and the missingness pattern discovery |
 | [reports/screening.md](reports/screening.md) | the screen, BH-FDR result, and the permutation null |
 | [reports/spc.md](reports/spc.md) | control charts, the degenerate declared flag, and the severity sweep |
 | [reports/model.md](reports/model.md) | holdout metrics, cost sweep, permutation importance |
@@ -200,7 +267,8 @@ recorded sha256 checksums verify on a fresh clone.
 | `secom_labels.data` | `126884cf453705c9e61a903fe906f0665a3b45ce3639e621edc5c93c89627e03` |
 | `secom.names` | `6d91b0b46cdee03064ee3e3112f937c1b3f7fcd9933575794ec07974e6f1ea59` |
 
-Checksums are verified on every load by `yield_screening/data_io.py`.
+Checksums are verified on every load by `yield_screening/data_io.py`, and again before
+the warehouse is built.
 
 ## Repository layout
 
@@ -208,10 +276,12 @@ Checksums are verified on every load by `yield_screening/data_io.py`.
 | --- | --- |
 | [DECISIONS.md](DECISIONS.md) | every frozen methodological choice with reasons, plus an adversarial self review |
 | [PLAN.md](PLAN.md) | phase plan, module layout, test schedule |
+| [`sql/`](sql/) | warehouse schema and the extraction, filtering and aggregation queries |
 | `yield_screening/` | library code |
 | `scripts/` | entry points |
 | `reports/` | generated reports |
 | `dashboard/` | self contained HTML dashboard and its data |
+| `docs/` | figures embedded above, generated from the pipeline's own output |
 | `tests/` | test suite |
 
 ## Tests
@@ -226,12 +296,15 @@ change any fitted parameter), screening behaviour on planted signal and on pure 
 and seed determinism. A fifth pins the screening statistic against `scipy` and
 `statsmodels`, and pins the fast matrix path used for the 2000 permutations against the
 readable reference path, because a permutation null computed from a subtly different
-statistic than the observation looks rigorous and is worthless.
+statistic than the observation looks rigorous and is worthless. A sixth asserts the SQL
+layer changed no answer: same drop verdict, same drop reason, and bit identical
+statistics against the pandas implementation, sensor by sensor.
 
 On pure noise across 100 fixed seeds, the screen produced at least one survivor in 4
 percent of runs, against a theoretical BH bound of 10 percent.
 
-CI also fails the build if an em dash appears anywhere in the repository.
+CI also fails the build if any non-ASCII character appears anywhere in the repository,
+which subsumes this project's ban on the em dash.
 
 ## Licence
 

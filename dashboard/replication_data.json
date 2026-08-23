@@ -1,0 +1,303 @@
+{
+  "summary": {
+    "n_shortlisted": 32,
+    "same_sign": 15,
+    "expected_same_sign_by_chance": 16.0,
+    "effect_correlation": 0.21572913393510915,
+    "median_abs_train_effect": 0.2102224069316408,
+    "median_abs_holdout_effect": 0.07739844425237685,
+    "n_replicating": 2,
+    "n_strong_time_trend": 16,
+    "median_abs_time_correlation": 0.27994030265375847
+  },
+  "features": [
+    {
+      "feature": "sensor_059",
+      "train effect": 0.5125434486927611,
+      "holdout effect": -0.054537597234226465,
+      "holdout raw p": 0.6400106270587056,
+      "time correlation on train": -0.47343306626497306,
+      "holdout BH adjusted p": 0.9482927391704693,
+      "replicates": false
+    },
+    {
+      "feature": "sensor_477",
+      "train effect": 0.30542541937433887,
+      "holdout effect": 0.031633535004321534,
+      "holdout raw p": 0.7861822714299697,
+      "time correlation on train": -0.1547547237177012,
+      "holdout BH adjusted p": 0.9482927391704693,
+      "replicates": false
+    },
+    {
+      "feature": "sensor_205",
+      "train effect": 0.30307037428844885,
+      "holdout effect": 0.023509075194468432,
+      "holdout raw p": 0.840228213170261,
+      "time correlation on train": -0.14542666454009637,
+      "holdout BH adjusted p": 0.9482927391704693,
+      "replicates": false
+    },
+    {
+      "feature": "sensor_103",
+      "train effect": 0.2937761321847765,
+      "holdout effect": 0.42973206568712197,
+      "holdout raw p": 0.00022813171094148785,
+      "time correlation on train": -0.6364656530892703,
+      "holdout BH adjusted p": 0.007300214750127611,
+      "replicates": true
+    },
+    {
+      "feature": "sensor_341",
+      "train effect": 0.2849100800967206,
+      "holdout effect": -0.0010371650821089373,
+      "holdout raw p": 0.9929035911307396,
+      "time correlation on train": -0.11886509946792014,
+      "holdout BH adjusted p": 0.9929035911307396,
+      "replicates": false
+    },
+    {
+      "feature": "sensor_290",
+      "train effect": 0.25345070777290823,
+      "holdout effect": -0.035350043215211735,
+      "holdout raw p": 0.7617643435265654,
+      "time correlation on train": -0.5052623647519104,
+      "holdout BH adjusted p": 0.9482927391704693,
+      "replicates": false
+    },
+    {
+      "feature": "sensor_079",
+      "train effect": 0.24865246083320747,
+      "holdout effect": -0.20527225583405362,
+      "holdout raw p": 0.07833456679363433,
+      "time correlation on train": -0.4493828256106083,
+      "holdout BH adjusted p": 0.6266765343490747,
+      "replicates": false
+    },
+    {
+      "feature": "sensor_028",
+      "train effect": -0.2478968313938844,
+      "holdout effect": -0.1454624027657736,
+      "holdout raw p": 0.21224760814380816,
+      "time correlation on train": 0.5523073045723874,
+      "holdout BH adjusted p": 0.6373854305574638,
+      "replicates": false
+    },
+    {
+      "feature": "sensor_000",
+      "train effect": -0.24216664147901867,
+      "holdout effect": 0.19118409680207438,
+      "holdout raw p": 0.10111178260235376,
+      "time correlation on train": 0.10989627904760632,
+      "holdout BH adjusted p": 0.6373854305574638,
+      "replicates": false
+    },
+    {
+      "feature": "sensor_510",
+      "train effect": 0.24015162964082415,
+      "holdout effect": 0.3388072601555747,
+      "holdout raw p": 0.0036675878099739286,
+      "time correlation on train": -0.485049730867934,
+      "holdout BH adjusted p": 0.05868140495958286,
+      "replicates": true
+    },
+    {
+      "feature": "sensor_033",
+      "train effect": 0.23021510251372734,
+      "holdout effect": 0.1672428694900605,
+      "holdout raw p": 0.15149904501660483,
+      "time correlation on train": -0.2557118489913777,
+      "holdout BH adjusted p": 0.6373854305574638,
+      "replicates": false
+    },
+    {
+      "feature": "sensor_021",
+      "train effect": 0.22476197672661336,
+      "holdout effect": 0.15842696629213493,
+      "holdout raw p": 0.1742789771659835,
+      "time correlation on train": 0.10479807325121888,
+      "holdout BH adjusted p": 0.6373854305574638,
+      "replicates": false
+    },
+    {
+      "feature": "sensor_072__notmeasured",
+      "train effect": -0.21613520729434288,
+      "holdout effect": 0.002160760587726962,
+      "holdout raw p": 0.9820842617436673,
+      "time correlation on train": 0.3598689201526535,
+      "holdout BH adjusted p": 0.9929035911307396,
+      "replicates": false
+    },
+    {
+      "feature": "sensor_333",
+      "train effect": 0.21250818598559262,
+      "holdout effect": -0.06966292134831464,
+      "holdout raw p": 0.550246944362597,
+      "time correlation on train": 0.12749166644358076,
+      "holdout BH adjusted p": 0.9482927391704693,
+      "replicates": false
+    },
+    {
+      "feature": "sensor_155",
+      "train effect": 0.21105989622689036,
+      "holdout effect": -0.024373379429559194,
+      "holdout raw p": 0.8342835882195171,
+      "time correlation on train": -0.48661207904582454,
+      "holdout BH adjusted p": 0.9482927391704693,
+      "replicates": false
+    },
+    {
+      "feature": "sensor_122",
+      "train effect": -0.21022870384363512,
+      "holdout effect": -0.11149524632670704,
+      "holdout raw p": 0.33896397750140517,
+      "time correlation on train": 0.2535412625357166,
+      "holdout BH adjusted p": 0.7747748057174975,
+      "replicates": false
+    },
+    {
+      "feature": "sensor_428",
+      "train effect": 0.21021611001964646,
+      "holdout effect": -0.020656871218668993,
+      "holdout raw p": 0.8593902948732378,
+      "time correlation on train": -0.48944780492271966,
+      "holdout BH adjusted p": 0.9482927391704693,
+      "replicates": false
+    },
+    {
+      "feature": "sensor_129",
+      "train effect": 0.20647574429499782,
+      "holdout effect": 0.22428694900605017,
+      "holdout raw p": 0.05424176566338057,
+      "time correlation on train": -0.44207265200430257,
+      "holdout BH adjusted p": 0.578578833742726,
+      "replicates": false
+    },
+    {
+      "feature": "sensor_197",
+      "train effect": 0.20624905546320083,
+      "holdout effect": -0.06499567847882459,
+      "holdout raw p": 0.5772761948449214,
+      "time correlation on train": 0.10250566510651467,
+      "holdout BH adjusted p": 0.9482927391704693,
+      "replicates": false
+    },
+    {
+      "feature": "sensor_377",
+      "train effect": -0.20493929776837438,
+      "holdout effect": 0.08513396715643906,
+      "holdout raw p": 0.463585028450915,
+      "time correlation on train": 0.34457673685352996,
+      "holdout BH adjusted p": 0.92717005690183,
+      "replicates": false
+    },
+    {
+      "feature": "sensor_469",
+      "train effect": 0.2008463049720417,
+      "holdout effect": -0.034745030250648234,
+      "holdout raw p": 0.7657383543011468,
+      "time correlation on train": 0.11434497363328676,
+      "holdout BH adjusted p": 0.9482927391704693,
+      "replicates": false
+    },
+    {
+      "feature": "sensor_351",
+      "train effect": 0.19980101758097835,
+      "holdout effect": -0.13898012100259294,
+      "holdout raw p": 0.23328350605721526,
+      "time correlation on train": -0.3888171436932399,
+      "holdout BH adjusted p": 0.6373854305574638,
+      "replicates": false
+    },
+    {
+      "feature": "sensor_460",
+      "train effect": 0.1978993501586821,
+      "holdout effect": -0.0070872947277441645,
+      "holdout raw p": 0.9515370803778517,
+      "time correlation on train": -0.0923986865041816,
+      "holdout BH adjusted p": 0.9929035911307396,
+      "replicates": false
+    },
+    {
+      "feature": "sensor_213",
+      "train effect": 0.19413379678605613,
+      "holdout effect": -0.1316335350043215,
+      "holdout raw p": 0.2589378311639696,
+      "time correlation on train": -0.38289263475442514,
+      "holdout BH adjusted p": 0.6373854305574638,
+      "replicates": false
+    },
+    {
+      "feature": "sensor_125",
+      "train effect": -0.19384413883431562,
+      "holdout effect": -0.1355229040622299,
+      "holdout raw p": 0.2450883162590567,
+      "time correlation on train": 0.30416875631613927,
+      "holdout BH adjusted p": 0.6373854305574638,
+      "replicates": false
+    },
+    {
+      "feature": "sensor_152",
+      "train effect": 0.19276106997128606,
+      "holdout effect": 0.035350043215211846,
+      "holdout raw p": 0.761781398131836,
+      "time correlation on train": -0.14967309894028893,
+      "holdout BH adjusted p": 0.9482927391704693,
+      "replicates": false
+    },
+    {
+      "feature": "sensor_040",
+      "train effect": -0.19114906050073044,
+      "holdout effect": -0.14632670700086425,
+      "holdout raw p": 0.20951656321476397,
+      "time correlation on train": 0.4538194060548271,
+      "holdout BH adjusted p": 0.6373854305574638,
+      "replicates": false
+    },
+    {
+      "feature": "sensor_468",
+      "train effect": -0.1896881769180394,
+      "holdout effect": -0.02731201382886772,
+      "holdout raw p": 0.8138619946151984,
+      "time correlation on train": 0.3622791149217516,
+      "holdout BH adjusted p": 0.9482927391704693,
+      "replicates": false
+    },
+    {
+      "feature": "sensor_127",
+      "train effect": -0.18506624351418066,
+      "holdout effect": -0.1460674157303371,
+      "holdout raw p": 0.21031226087258548,
+      "time correlation on train": 0.2512638933873842,
+      "holdout BH adjusted p": 0.6373854305574638,
+      "replicates": false
+    },
+    {
+      "feature": "sensor_128",
+      "train effect": 0.18308901314795234,
+      "holdout effect": -0.10492653414001729,
+      "holdout raw p": 0.3681839116925836,
+      "time correlation on train": -0.11449668444608813,
+      "holdout BH adjusted p": 0.785459011610845,
+      "replicates": false
+    },
+    {
+      "feature": "sensor_287",
+      "train effect": 0.1825852601884037,
+      "holdout effect": 0.055142610198789965,
+      "holdout raw p": 0.6363035310999869,
+      "time correlation on train": -0.15290616907820728,
+      "holdout BH adjusted p": 0.9482927391704693,
+      "replicates": false
+    },
+    {
+      "feature": "sensor_112__notmeasured",
+      "train effect": -0.17528084227494833,
+      "holdout effect": 0.037165082108902237,
+      "holdout raw p": 0.6383347886379505,
+      "time correlation on train": 0.2448688739256466,
+      "holdout BH adjusted p": 0.9482927391704693,
+      "replicates": false
+    }
+  ]
+}
