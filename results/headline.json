@@ -1,16 +1,16 @@
 {
   "schema": "headline/v1",
   "repo": "AaroNLaU0307/semiconductor-yield-screening",
-  "source_commit": "PENDING",
+  "source_commit": "79074ea23fa795db9dde6953f1be877bad8221d4",
   "as_of": "2026-09-27",
   "rows": [
     {
       "id": "semiconductor-yield-screening",
       "section": "other",
-      "hypothesis": "Semiconductor yield detractor screening: which of 590 inline sensors in UCI SECOM are associated with lot failure",
+      "hypothesis": "Semiconductor yield detractor screening (UCI SECOM, 590 inline sensors)",
       "verdict": "MOSTLY AN ARTIFACT OF TIME",
-      "verdict_detail": "2 of 32 shortlisted sensors replicate on the holdout (post-hoc); the predictive baseline is at no skill",
-      "mechanism": "The failure rate drifts across the collection window and 16 of the 32 train-screen survivors trend with time, and the associations mostly fail to transfer: 15 of 32 keep their sign on the holdout and only sensor_103 and sensor_510 replicate under BH.",
+      "verdict_detail": "post-hoc holdout replication is weak and the predictive baseline is at no skill",
+      "mechanism": "the failure rate drifts over the collection window and many train-screen survivors trend with time; once the null keeps time order the screen only narrowly beats chance, and most associations do not transfer to the holdout",
       "stats": [
         {
           "label": "screen p, time order preserving null",
