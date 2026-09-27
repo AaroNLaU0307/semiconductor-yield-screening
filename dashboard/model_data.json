@@ -791,7 +791,7 @@
       "roc_auc": 0.5272255834053586,
       "no_skill": 0.055201698513800426,
       "recall_at_budget": 0.23076923076923078,
-      "threshold_at_budget": 0.49396777554294374,
+      "threshold_at_budget": 0.49396777554255666,
       "accuracy_floor": 0.9447983014861996
     }
   ],
