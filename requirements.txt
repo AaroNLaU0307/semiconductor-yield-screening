@@ -1,16 +1,36 @@
-numpy>=1.26
-pandas>=2.1
-scipy>=1.11
-scikit-learn>=1.4
-plotly>=5.20
+# Python 3.11 (matches CI). Exact pins: this file is the lock.
+numpy==2.4.6
+pandas==3.0.6
+scipy==1.17.1
+scikit-learn==1.9.1
+# 6.9.0 bundles plotly.js v3.7.0, the version embedded in dashboard/index.html, so the
+# dashboard regenerates byte identically.
+plotly==6.9.0
 
 # The pipeline reads process data from a local DuckDB warehouse rather than from
 # flat files, because that is where fab process data actually lives. SQL does
 # extraction, filtering and aggregation; Python does inference.
-duckdb>=1.0
-pytest>=8.0
+duckdb==1.5.5
+pytest==9.1.1
 
 # Test only. tests/test_screening_math.py checks this project's Benjamini-Hochberg
 # implementation against statsmodels. Without it that check silently skips, which
 # would leave the FDR correction unverified in CI.
-statsmodels>=0.14
+statsmodels==0.15.0
+
+# Transitive dependencies, pinned to the versions the lines above resolve to.
+cloudpickle==3.1.2
+formulaic==1.2.2
+iniconfig==2.3.0
+interface-meta==2.0.1
+joblib==1.6.0
+narwhals==2.26.0
+packaging==26.3
+patsy==1.0.3
+pluggy==1.6.0
+pygments==2.21.0
+python-dateutil==2.9.0.post0
+six==1.17.0
+threadpoolctl==3.7.0
+typing-extensions==4.16.0
+wrapt==2.5.0

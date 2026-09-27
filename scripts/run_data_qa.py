@@ -602,7 +602,7 @@ def main() -> int:
         ]
     )
     outlier_worst = (
-        scalable.sort_values("max_robust_z", ascending=False)
+        scalable.sort_values("max_robust_z", ascending=False, kind="stable")
         .head(8)[["n_outliers", "outlier_share", "max_robust_z"]]
         .reset_index()
         .rename(
@@ -629,8 +629,13 @@ def main() -> int:
         .rename_axis("quantile")
         .reset_index()
     )
+    # Sensors on one sampling plan share a missing rate exactly, so ties are common
+    # here. The order is therefore made explicit, missing rate descending and then
+    # sensor name, with stable sorts: a default quicksort leaves tied rows in an order
+    # that depends on the library version, and with it which sensors reach the table.
     worst_missing = (
-        profile.sort_values("missing_rate", ascending=False)
+        profile.sort_index(kind="stable")
+        .sort_values("missing_rate", ascending=False, kind="stable")
         .head(10)[["missing_rate", "non_null_count", "unique_non_null"]]
         .reset_index()
         .rename(columns={"index": "sensor"})

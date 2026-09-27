@@ -2,9 +2,11 @@
 
 Usage, from the repository root:
     python scripts/run_pipeline.py
+    python scripts/run_pipeline.py --output-root DIR   # write DIR/reports, DIR/dashboard
 
 Deterministic: the same seed produces the same reported numbers, which is enforced by
-`tests/test_determinism.py`.
+`tests/test_determinism.py`. That test writes to a temporary `--output-root`, so running
+the suite never rewrites the committed artifacts.
 
 Phase order follows PLAN.md. The holdout partition is not transformed or read at all
 until Phase 3, and the two places that read it are declared in DECISIONS.md D12.
@@ -12,6 +14,7 @@ until Phase 3, and the two places that read it are declared in DECISIONS.md D12.
 
 from __future__ import annotations
 
+import argparse
 import json
 import sys
 from pathlib import Path
@@ -1421,7 +1424,21 @@ def write_timeline_data(timestamp: pd.Series, y: np.ndarray, split) -> None:
 # ---------------------------------------------------------------------------
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description="Run phases 2 to 5 and write every report.")
+    parser.add_argument(
+        "--output-root",
+        type=Path,
+        default=REPO_ROOT,
+        help="directory that receives reports/ and dashboard/ (default: the repository root)",
+    )
+    args = parser.parse_args(argv)
+    global REPORTS, DASHBOARD
+    REPORTS = args.output_root / "reports"
+    DASHBOARD = args.output_root / "dashboard"
+    REPORTS.mkdir(parents=True, exist_ok=True)
+    DASHBOARD.mkdir(parents=True, exist_ok=True)
+
     # Provenance first: the raw file checksums are verified, then the warehouse is
     # built from that verified parse. The pipeline reads from the database because that
     # is where process data lives. tests/test_warehouse.py asserts the warehouse loader

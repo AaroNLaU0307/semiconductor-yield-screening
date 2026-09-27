@@ -256,6 +256,9 @@ sensor.
 
 ## Running it
 
+Python 3.11, the version CI uses. `requirements.txt` pins every package, transitive ones
+included, to an exact version.
+
 ```
 pip install -r requirements.txt
 python scripts/run_data_qa.py
@@ -266,7 +269,11 @@ python scripts/build_doe_proposal.py
 
 The warehouse is built automatically on first run from the committed raw files, so no
 database setup is needed. The pipeline is deterministic: the same seed produces byte
-identical reports, which is enforced by a test that runs it twice and compares.
+identical reports, which is enforced by a test that runs it twice into a temporary
+directory, compares the two runs byte for byte, and compares both with the committed
+files. The markdown reports match those exactly. In the CSV and JSON files the last
+digits of a few floats depend on the machine (the logistic regression goes through a CPU
+specific BLAS kernel), so there the comparison allows a relative tolerance of 1e-9.
 
 ## Reports
 

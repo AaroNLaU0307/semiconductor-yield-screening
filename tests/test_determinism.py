@@ -22,11 +22,15 @@ one declared command twice reproduces every generated report and dashboard file
 exactly. Nothing in group 1 exercises a fresh process, a fresh import of every
 module, or the interaction of every phase end to end, so group 1 passing is
 necessary but not sufficient evidence for the claim group 2 checks directly.
+Both runs write to a temporary directory, and their output is then compared with
+the committed artifacts (markdown exactly, CSV and JSON with a float tolerance), so
+the suite never rewrites a tracked file and a stale committed report fails it.
 """
 
 from __future__ import annotations
 
-import hashlib
+import json
+import math
 import subprocess
 import sys
 from dataclasses import dataclass
@@ -199,40 +203,94 @@ def test_model_fit_is_deterministic(train_setup: _TrainSetup) -> None:
 
 RUN_PIPELINE = REPO_ROOT / "scripts" / "run_pipeline.py"
 
+#: Tolerance for numbers in the generated CSV and JSON files when they are compared
+#: with the committed copies. Two runs on one machine agree byte for byte, but the last
+#: digits of a few floats depend on the platform: the logistic regression's solver
+#: goes through the CPU specific BLAS kernel, and the normal tail probability can
+#: differ in the last bit between builds. Markdown reports print rounded values and
+#: are compared exactly.
+FLOAT_RTOL = 1e-9
+FLOAT_ATOL = 1e-12
 
-def _tracked_report_files() -> list[Path]:
-    """Every file this test regenerates and compares.
 
-    Every `.md`, `.csv` and `.json` file directly under `reports/`, and every
-    `.json` file directly under `dashboard/`. `dashboard/index.html` is
-    deliberately excluded (it does not match the `.json` filter above): a
-    separate script generates it, and it is out of scope here.
+def _generated_files(output_root: Path) -> list[Path]:
+    """Every file the pipeline wrote under `output_root`, relative to it.
+
+    The `.md`, `.csv` and `.json` files under `reports/`, and the `.json` files under
+    `dashboard/`. `dashboard/index.html` is built by a separate script and is out of
+    scope here.
     """
-    reports_files = [
-        path
-        for path in (REPO_ROOT / "reports").iterdir()
-        if path.is_file() and path.suffix in (".md", ".csv", ".json")
+    found = [
+        path.relative_to(output_root)
+        for folder, suffixes in (("reports", (".md", ".csv", ".json")), ("dashboard", (".json",)))
+        for path in (output_root / folder).iterdir()
+        if path.is_file() and path.suffix in suffixes
     ]
-    dashboard_files = [
-        path
-        for path in (REPO_ROOT / "dashboard").iterdir()
-        if path.is_file() and path.suffix == ".json"
-    ]
-    return sorted(reports_files + dashboard_files)
+    return sorted(found)
 
 
-def _sha256_by_relative_path(paths: list[Path]) -> dict[str, str]:
-    """Map each path, keyed by its path relative to the repo root, to its sha256."""
-    return {
-        str(path.relative_to(REPO_ROOT)): hashlib.sha256(path.read_bytes()).hexdigest()
-        for path in paths
-    }
+def _run_pipeline(output_root: Path) -> None:
+    subprocess.run(
+        [sys.executable, str(RUN_PIPELINE), "--output-root", str(output_root)],
+        cwd=REPO_ROOT,
+        check=True,
+        capture_output=True,
+        timeout=600,
+    )
+
+
+def _assert_json_close(actual: object, expected: object, where: str) -> None:
+    """Recursive equality, with floats compared to FLOAT_RTOL and FLOAT_ATOL."""
+    if isinstance(expected, dict):
+        assert isinstance(actual, dict) and actual.keys() == expected.keys(), where
+        for key in expected:
+            _assert_json_close(actual[key], expected[key], f"{where}.{key}")
+    elif isinstance(expected, list):
+        assert isinstance(actual, list) and len(actual) == len(expected), where
+        for i, (a, e) in enumerate(zip(actual, expected, strict=True)):
+            _assert_json_close(a, e, f"{where}[{i}]")
+    elif isinstance(expected, float) and not isinstance(expected, bool):
+        assert isinstance(actual, (int, float)), where
+        if math.isnan(expected):
+            assert math.isnan(actual), where
+        else:
+            assert math.isclose(actual, expected, rel_tol=FLOAT_RTOL, abs_tol=FLOAT_ATOL), (
+                f"{where}: {actual!r} != {expected!r}"
+            )
+    else:
+        assert actual == expected, f"{where}: {actual!r} != {expected!r}"
+
+
+def _assert_matches_committed(generated: Path, committed: Path) -> None:
+    """Markdown exactly; CSV and JSON exactly in structure and text, floats to tolerance."""
+    name = str(committed.relative_to(REPO_ROOT))
+    assert committed.exists(), f"{name} is generated but not committed"
+    if generated.suffix == ".md":
+        assert generated.read_bytes() == committed.read_bytes(), (
+            f"{name} differs from the committed copy: rerun scripts/run_pipeline.py"
+        )
+    elif generated.suffix == ".csv":
+        pd.testing.assert_frame_equal(
+            pd.read_csv(generated),
+            pd.read_csv(committed),
+            check_exact=False,
+            rtol=FLOAT_RTOL,
+            atol=FLOAT_ATOL,
+            obj=name,
+        )
+    else:
+        _assert_json_close(
+            json.loads(generated.read_text(encoding="utf-8")),
+            json.loads(committed.read_text(encoding="utf-8")),
+            name,
+        )
 
 
 @pytest.mark.slow
-def test_pipeline_rerun_produces_identical_reports() -> None:
+def test_pipeline_rerun_produces_identical_reports(tmp_path: Path) -> None:
     """Running scripts/run_pipeline.py twice, from a clean process each time,
-    produces byte identical reports and dashboard data both times.
+    produces byte identical reports and dashboard data both times, and both match
+    the committed artifacts.
 
     This is the property required test 4 actually claims: not that a function is
     pure given its arguments, but that running the one declared command twice
@@ -240,47 +298,24 @@ def test_pipeline_rerun_produces_identical_reports() -> None:
     roughly 50 seconds, so this test takes roughly 100 seconds; it is marked
     `slow` so a reader can filter it out, but it is not skipped by default.
 
-    This test regenerates every tracked report and dashboard file. Since the
-    content should be identical, that is normally harmless, but if the test
-    fails partway through, the repository must not be left holding a half
-    written report. The bytes of every tracked file are read and saved before
-    the first run, and are restored, but only if the test did not complete
-    successfully.
+    Both runs write to a temporary `--output-root`, so the committed files are only
+    read, never rewritten. Comparing against them is what makes a stale committed
+    report fail the build.
     """
-    tracked = _tracked_report_files()
-    original_bytes = {path: path.read_bytes() for path in tracked}
+    first_root, second_root = tmp_path / "first", tmp_path / "second"
+    _run_pipeline(first_root)
+    _run_pipeline(second_root)
 
-    succeeded = False
-    try:
-        subprocess.run(
-            [sys.executable, str(RUN_PIPELINE)],
-            cwd=REPO_ROOT,
-            check=True,
-            capture_output=True,
-            timeout=300,
-        )
-        first_hashes = _sha256_by_relative_path(_tracked_report_files())
+    first_files = _generated_files(first_root)
+    assert first_files == _generated_files(second_root), (
+        "the set of generated report/dashboard files changed between runs"
+    )
+    differing = [
+        str(rel)
+        for rel in first_files
+        if (first_root / rel).read_bytes() != (second_root / rel).read_bytes()
+    ]
+    assert not differing, f"non-deterministic output detected in: {differing}"
 
-        subprocess.run(
-            [sys.executable, str(RUN_PIPELINE)],
-            cwd=REPO_ROOT,
-            check=True,
-            capture_output=True,
-            timeout=300,
-        )
-        second_hashes = _sha256_by_relative_path(_tracked_report_files())
-
-        assert set(first_hashes) == set(second_hashes), (
-            "the set of generated report/dashboard files changed between runs: "
-            f"only after run 1: {sorted(set(first_hashes) - set(second_hashes))}, "
-            f"only after run 2: {sorted(set(second_hashes) - set(first_hashes))}"
-        )
-        differing = sorted(
-            name for name in first_hashes if first_hashes[name] != second_hashes[name]
-        )
-        assert not differing, f"non-deterministic output detected in: {differing}"
-        succeeded = True
-    finally:
-        if not succeeded:
-            for path, content in original_bytes.items():
-                path.write_bytes(content)
+    for rel in first_files:
+        _assert_matches_committed(first_root / rel, REPO_ROOT / rel)

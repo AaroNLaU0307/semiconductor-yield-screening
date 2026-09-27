@@ -64,16 +64,16 @@ Ten worst sensors by missing rate:
 
 | sensor | missing_rate | non_null_count | unique_non_null |
 | --- | --- | --- | --- |
+| sensor_157 | 0.9119 | 138 | 128 |
+| sensor_158 | 0.9119 | 138 | 138 |
 | sensor_292 | 0.9119 | 138 | 92 |
 | sensor_293 | 0.9119 | 138 | 138 |
-| sensor_158 | 0.9119 | 138 | 138 |
-| sensor_157 | 0.9119 | 138 | 128 |
-| sensor_492 | 0.8558 | 226 | 226 |
 | sensor_085 | 0.8558 | 226 | 97 |
-| sensor_358 | 0.8558 | 226 | 20 |
 | sensor_220 | 0.8558 | 226 | 69 |
-| sensor_244 | 0.6496 | 549 | 66 |
-| sensor_517 | 0.6496 | 549 | 543 |
+| sensor_358 | 0.8558 | 226 | 20 |
+| sensor_492 | 0.8558 | 226 | 226 |
+| sensor_109 | 0.6496 | 549 | 96 |
+| sensor_110 | 0.6496 | 549 | 546 |
 
 ## 4. Degenerate and redundant columns
 
