@@ -10,13 +10,23 @@ null, SPC control charts, and a cost aware predictive baseline.
 
 ### 1. The screen finds real structure, and most of it is an artifact of time
 
-On the training period, **32 of 424 features cleared Benjamini-Hochberg at q = 0.10**,
-and the permutation null is decisive: across 2000 label permutations, 91.9 percent
-produced zero survivors, the null mean was 0.25 and the null maximum was 15, against an
-observed 32. **Permutation p = 0.0005.** Testing 424 correlated things at once does not
-explain the result.
+On the training period, **32 of 424 features cleared Benjamini-Hochberg at q = 0.10**.
+Under the declared permutation null ([DECISIONS.md](DECISIONS.md) D6), across 2000 label
+permutations 91.9 percent produced zero survivors, the null mean was 0.25 and the null
+maximum was 15, against an observed 32: **permutation p = 0.0005**, the smallest value
+2000 permutations can give. Testing 424 correlated things at once does not explain the
+result.
 
-![Permutation null](docs/permutation_null.png)
+![Permutation null, the declared free shuffle](docs/permutation_null.png)
+
+That null shuffles the labels freely, as if they were exchangeable across time, and D0
+records that they are not. A post-hoc sensitivity analysis reruns the whole screen, BH
+included, on every circular shift of the time ordered train labels (all 1095 of them,
+so no random draw is involved), which keeps the clustering of failures in time. The null
+mean rises to 7.59, its 95th percentile to 27 and its maximum to 53, and 34 of the 1095
+shifts reach 32 survivors: **p = 0.0319**. The screen still beats chance, but by a much
+narrower margin than the free shuffle suggests. Details in
+[reports/screening.md](reports/screening.md) section 4.
 
 Recomputing those same effect sizes on the held out period tells a different story. Of
 the 32 shortlisted features, only **15 keep the sign of their effect** (a coin gives
@@ -195,7 +205,8 @@ Each of the resulting 424 features is tested against the label with a two sided
 Mann-Whitney U test (tie corrected, because imputation creates large tie blocks),
 reported with a rank-biserial effect size, and corrected with Benjamini-Hochberg at
 q = 0.10. The whole screen, BH correction included, is then rerun on 2000 label
-permutations.
+permutations and, as a post-hoc sensitivity analysis, on every circular shift of the
+time ordered labels.
 
 Shortlisted sensors get I-MR charts with limits computed on train, and out of control
 flags are cross referenced against actual holdout failures with Fisher's exact test.
@@ -281,7 +292,7 @@ specific BLAS kernel), so there the comparison allows a relative tolerance of 1e
 | report | contents |
 | --- | --- |
 | [reports/data_quality.md](reports/data_quality.md) | what the raw data actually contains, including the ugly parts, and the missingness pattern discovery |
-| [reports/screening.md](reports/screening.md) | the screen, BH-FDR result, and the permutation null |
+| [reports/screening.md](reports/screening.md) | the screen, BH-FDR result, the declared permutation null and its time order preserving sensitivity |
 | [reports/spc.md](reports/spc.md) | control charts, the degenerate declared flag, and the severity sweep |
 | [reports/model.md](reports/model.md) | holdout metrics, cost sweep, permutation importance |
 | [reports/replication.md](reports/replication.md) | post-hoc: why the associations did not transfer |

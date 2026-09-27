@@ -51,6 +51,7 @@ from yield_screening.reporting import (  # noqa: E402
 from yield_screening.screening import (  # noqa: E402
     benjamini_hochberg,
     bootstrap_rank_biserial,
+    circular_shift_null,
     mannwhitney_screen,
     permutation_null,
 )
@@ -82,13 +83,21 @@ def phase_2_screening(X_train: pd.DataFrame, y_train: np.ndarray, pre: Preproces
         q=config.FDR_Q,
         seed=config.RANDOM_SEED,
     )
-    write_screening_report(screen, perm, pre, y_train)
-    return screen, perm
+    # Post-hoc sensitivity, outside the Gate 1 freeze: the same screen on every circular
+    # shift of the time ordered labels. The declared null above stays the primary result.
+    shift = circular_shift_null(
+        X_train, y_train, observed_count=screen.n_survivors, q=config.FDR_Q
+    )
+    write_screening_report(screen, perm, shift, pre, y_train)
+    return screen, perm, shift
 
 
-def write_screening_report(screen, perm, pre: Preprocessor, y_train: np.ndarray) -> None:
+def write_screening_report(
+    screen, perm, shift, pre: Preprocessor, y_train: np.ndarray
+) -> None:
     table = screen.table
     summary = perm.summary()
+    shift_summary = shift.summary()
 
     table.to_csv(REPORTS / "screening_table.csv", index=False)
 
@@ -137,7 +146,7 @@ def write_screening_report(screen, perm, pre: Preprocessor, y_train: np.ndarray)
         ]
     )
 
-    verdict = screening_verdict(screen, perm)
+    verdict = screening_verdict(screen, perm, shift)
 
     parts = [
         "# Screening report\n",
@@ -201,6 +210,49 @@ def write_screening_report(screen, perm, pre: Preprocessor, y_train: np.ndarray)
         ),
         "\nNull distribution of the survivor count:\n",
         histogram_lines(perm.null_counts),
+        "\n\n### Sensitivity: a null that keeps the labels in time order (post-hoc)\n",
+        (
+            "**Added on 2026-09-27, after the results, and not part of the Gate 1 freeze.** "
+            "The null above shuffles the labels freely, which treats them as exchangeable "
+            "across time. DECISIONS.md D0 records that they are not: the failure rate moves "
+            "by a factor of seven across the window and failures cluster. When the labels "
+            "and many sensors both trend, a free shuffle destroys the shared trend and so "
+            "understates how many survivors chance alone produces. This null instead rotates "
+            "the time ordered train labels by every possible offset (a circular shift), "
+            "which keeps the clustering of failures and breaks only their alignment with "
+            "the sensors, and reruns the entire screen, BH correction included, on each. "
+            "The declared null above remains the primary result; this one measures how much "
+            "of it rests on the exchangeability assumption.\n"
+        ),
+        kv_table(
+            [
+                ("method", "circular shift of the time ordered train labels"),
+                (
+                    "shifts evaluated",
+                    (
+                        f"{shift.n_permutations}, every non-zero shift, so exhaustive "
+                        "and with no random seed"
+                    ),
+                ),
+                ("observed survivor count", int(shift_summary["observed"])),
+                ("null mean survivor count", f"{shift_summary['null_mean']:.2f}"),
+                ("null median", f"{shift_summary['null_median']:.0f}"),
+                ("null 95th percentile", f"{shift_summary['null_p95']:.0f}"),
+                ("null maximum", f"{shift_summary['null_max']:.0f}"),
+                (
+                    "shifts producing zero survivors",
+                    f"{shift_summary['null_zero_share']:.3f}",
+                ),
+                (
+                    "shifts reaching the observed count",
+                    int(np.sum(shift.null_counts >= shift.observed_count)),
+                ),
+                ("time order preserving p-value", fmt_p(shift.p_value)),
+            ]
+        ),
+        "\nNull distribution of the survivor count over the shifts:\n",
+        histogram_lines(shift.null_counts),
+        "\n\n" + time_order_reading(perm, shift),
         "\n\n## 5. Ranked features\n",
         f"Top 25 of {screen.n_tested} by survival then absolute effect size. The full "
         "table is `reports/screening_table.csv`.\n",
@@ -264,6 +316,11 @@ def write_screening_report(screen, perm, pre: Preprocessor, y_train: np.ndarray)
         "expected_false_discoveries": screen.expected_false_discoveries,
         "fallback_used": bool(screen.fallback_used),
         "permutation": {k: float(v) for k, v in summary.items()},
+        "permutation_time_order": {
+            "method": "circular shift of the time ordered train labels, post-hoc",
+            "n_shifts": int(shift.n_permutations),
+            **{k: float(v) for k, v in shift_summary.items()},
+        },
         "null_counts": perm.null_counts.tolist(),
         "shortlist": shortlist[display_cols].to_dict(orient="records"),
     }
@@ -272,9 +329,43 @@ def write_screening_report(screen, perm, pre: Preprocessor, y_train: np.ndarray)
     )
 
 
-def screening_verdict(screen, perm) -> str:
+def time_order_reading(perm, shift) -> str:
+    """How the time order preserving null compares with the declared one, computed."""
+    iid, rotated = perm.summary(), shift.summary()
+    at_least = int(np.sum(shift.null_counts >= shift.observed_count))
+    lead = (
+        f"Under this null, {at_least} of {shift.n_permutations} shifts produce "
+        f"{shift.observed_count} or more survivors, p = {fmt_p(shift.p_value)}, against "
+        f"p = {fmt_p(perm.p_value)} under the free shuffle. The null mean rises from "
+        f"{iid['null_mean']:.2f} to {rotated['null_mean']:.2f}, and the 95th percentile "
+        f"from {iid['null_p95']:.0f} to {rotated['null_p95']:.0f}."
+    )
+    if shift.p_value <= 0.01:
+        reading = "The screen still finds far more structure than this null produces."
+    elif shift.p_value <= 0.05:
+        reading = (
+            "The screen still finds more structure than chance produces, but by a much "
+            "narrower margin than the free shuffle suggests: much of the margin the "
+            "declared null reports comes from treating time ordered labels as "
+            "exchangeable."
+        )
+    else:
+        reading = (
+            "Once the time order of the labels is respected, the survivor count is not "
+            "distinguishable from chance at the 0.05 level."
+        )
+    return f"{lead} {reading}"
+
+
+def screening_verdict(screen, perm, shift) -> str:
     """Plain language headline, written to be honest in either direction."""
     p = perm.p_value
+    at_floor = int(np.sum(perm.null_counts >= perm.observed_count)) == 0
+    floor_note = (
+        f", the smallest value {perm.n_permutations} permutations can give"
+        if at_floor
+        else ""
+    )
     if screen.n_survivors == 0:
         lead = (
             f"**No feature cleared the screening threshold.** Of {screen.n_tested} "
@@ -291,13 +382,14 @@ def screening_verdict(screen, perm) -> str:
 
     if p <= 0.01:
         null_read = (
-            f"The permutation null is decisive: across {perm.n_permutations} label "
+            f"Under the declared permutation null, across {perm.n_permutations} label "
             f"permutations, a survivor count this large arose with permutation "
-            f"p = {fmt_p(p)}. The screen is finding structure that shuffling destroys."
+            f"p = {fmt_p(p)}{floor_note}. The screen is finding structure that shuffling "
+            "destroys."
         )
     elif p <= 0.10:
         null_read = (
-            f"The permutation null is suggestive but not decisive, permutation "
+            f"The permutation null is suggestive rather than strong, permutation "
             f"p = {fmt_p(p)}. Shuffled labels reproduce a count this large in roughly "
             f"{p:.0%} of permutations."
         )
@@ -319,7 +411,18 @@ def screening_verdict(screen, perm) -> str:
             "column in the emitted data rather than prose added by hand."
         )
 
-    return f"{lead}\n\n{null_read}{fallback_note}"
+    if shift.p_value <= 0.05:
+        shift_verdict = "the screen still beats chance, by a much narrower margin"
+    else:
+        shift_verdict = "the survivor count is not distinguishable from chance"
+    time_read = (
+        "That null shuffles the labels freely, as if they were exchangeable across "
+        "time, which DECISIONS.md D0 records they are not. A post-hoc null that keeps "
+        "them in time order, rerunning the screen on every circular shift of the label "
+        f"series (section 4), gives p = {fmt_p(shift.p_value)}: {shift_verdict}."
+    )
+
+    return f"{lead}\n\n{null_read}\n\n{time_read}{fallback_note}"
 
 
 # ---------------------------------------------------------------------------
@@ -1048,6 +1151,8 @@ def phase_5_replication(
     X_holdout_raw: pd.DataFrame,
     y_holdout: np.ndarray,
     screen,
+    perm,
+    shift,
 ):
     """Post-hoc: do the shortlisted associations reappear in the holdout period?
 
@@ -1165,7 +1270,7 @@ def phase_5_replication(
 
     write_replication_report(
         table, stats_summary, monthly_wide, drifting, exposure, coverage,
-        int(y_holdout.sum()),
+        int(y_holdout.sum()), perm, shift,
     )
     (DASHBOARD / "replication_data.json").write_text(
         json.dumps(
@@ -1241,6 +1346,8 @@ def write_replication_report(
     exposure: pd.DataFrame,
     coverage: pd.DataFrame,
     y_holdout_failures: int,
+    perm,
+    shift,
 ) -> None:
     replicating = table[table["replicates"]].sort_values(
         "holdout BH adjusted p", kind="stable"
@@ -1305,7 +1412,9 @@ def write_replication_report(
         "## 1. The question\n",
         f"The screen found {summary['n_shortlisted']} features associated with failure "
         "in the train period, and the permutation null said that count was not chance "
-        "(p = 0.0005). The model built on those features then failed to beat no skill "
+        f"(p = {fmt_p(perm.p_value)}; p = {fmt_p(shift.p_value)} under the post-hoc "
+        "null that keeps the labels in time order, `reports/screening.md` section 4). "
+        "The model built on those features then failed to beat no skill "
         "on the holdout. Both statements are correct, and this page reconciles them.\n",
         "## 2. The associations mostly do not reappear\n",
         kv_table(
@@ -1507,10 +1616,11 @@ def main(argv: list[str] | None = None) -> int:
         f"{len(pre.indicator_groups)} indicators = {len(pre.feature_names)}"
     )
 
-    screen, perm = phase_2_screening(X_train, y_train, pre)
+    screen, perm, shift = phase_2_screening(X_train, y_train, pre)
     print(
         f"phase 2: {screen.n_survivors}/{screen.n_tested} survived BH at q={screen.q}, "
-        f"permutation p={perm.p_value:.4f}, fallback={screen.fallback_used}"
+        f"permutation p={perm.p_value:.4f}, time order preserving p={shift.p_value:.4f}, "
+        f"fallback={screen.fallback_used}"
     )
 
     # From here the holdout is read. Everything in DECISIONS.md is already frozen.
@@ -1540,7 +1650,7 @@ def main(argv: list[str] | None = None) -> int:
         f"recall@FPR{config.FALSE_ALARM_BUDGET_FPR}={primary.recall_at_budget:.4f}"
     )
     replication, repl_summary = phase_5_replication(
-        X_train, y_train, X_holdout, X_holdout_raw, y_holdout, screen
+        X_train, y_train, X_holdout, X_holdout_raw, y_holdout, screen, perm, shift
     )
     print(
         f"phase 5 (post-hoc): {repl_summary['same_sign']}/"

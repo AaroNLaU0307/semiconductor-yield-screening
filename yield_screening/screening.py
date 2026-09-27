@@ -11,6 +11,11 @@ product so that 2000 permutations are affordable, exploiting the fact that ranks
 not change when labels are permuted. A permutation null computed from a subtly
 different statistic than the observed value looks rigorous and is worthless, so
 `tests/test_screening_math.py` pins the two together and both against scipy.
+
+`circular_shift_null` is a post-hoc sensitivity analysis added on 2026-09-27, outside
+the Gate 1 freeze: the same screen rerun on every circular shift of the time ordered
+labels, a null that keeps the clustering of failures in time that a free shuffle
+destroys. The declared null in D6 remains the primary result.
 """
 
 from __future__ import annotations
@@ -276,13 +281,17 @@ def mannwhitney_screen(
 
 @dataclass
 class PermutationNullResult:
-    """Null distribution of the survivor count under permuted labels."""
+    """Null distribution of the survivor count under permuted labels.
+
+    `seed` is None when the null is enumerated exhaustively rather than drawn, as
+    `circular_shift_null` does, since no random number is used.
+    """
 
     null_counts: np.ndarray
     observed_count: int
     n_permutations: int
     q: float
-    seed: int
+    seed: int | None
 
     @property
     def p_value(self) -> float:
@@ -346,4 +355,58 @@ def permutation_null(
         n_permutations=int(n_permutations),
         q=q,
         seed=seed,
+    )
+
+
+def circular_shift_null(
+    X: pd.DataFrame,
+    y: np.ndarray,
+    observed_count: int,
+    q: float = FDR_Q,
+) -> PermutationNullResult:
+    """Rerun the whole screen on every circular shift of the time ordered labels.
+
+    **A post-hoc sensitivity analysis, not part of the Gate 1 freeze.** The declared
+    null in `permutation_null` shuffles labels freely, which treats them as
+    exchangeable across time, and DECISIONS.md D0 records that they are not: the
+    failure rate moves by a factor of seven across the window and failures cluster.
+    When labels and sensors both trend, a free shuffle destroys the shared trend and so
+    understates how many survivors chance alone produces.
+
+    This null rotates the label series instead: shift k moves every label k records
+    later in time and wraps the end round to the start. The run lengths and clustering
+    of failures are kept exactly, except at the single wrap point, while their
+    alignment with the sensors is broken. `X` must be in time order, as the train
+    partition is. All n - 1 non-zero shifts are evaluated, so the null is exhaustive and
+    involves no random draw. Shifts of a few records barely move the labels, so
+    including them makes this null conservative rather than generous.
+
+    Ranks, sigma and the matrix product are exactly those of `permutation_null`, so
+    the fast path is pinned to the reference screen by the same tests.
+    """
+    values = X.to_numpy(dtype=np.float64)
+    y = np.asarray(y).astype(int)
+    n = len(y)
+    n1 = int(y.sum())
+    n2 = n - n1
+
+    ranks = column_midranks(values)
+    sigma = u_sigma(n1, n2, tie_terms(values))
+
+    # Column k - 1 of `labels` is np.roll(y, k): label i moves to position i + k mod n.
+    shifts = np.arange(1, n)
+    source = (np.arange(n)[:, None] - shifts[None, :]) % n
+    labels = y[source].astype(np.float64)
+
+    rank_sums = ranks.T @ labels
+    u1 = u_from_rank_sums(rank_sums, n1)
+    p_matrix = p_from_u(u1, n1, n2, sigma[:, None])
+    counts = bh_survivor_counts(p_matrix, q)
+
+    return PermutationNullResult(
+        null_counts=counts,
+        observed_count=int(observed_count),
+        n_permutations=int(shifts.size),
+        q=q,
+        seed=None,
     )

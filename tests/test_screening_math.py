@@ -16,6 +16,7 @@ from scipy import stats
 from yield_screening.screening import (
     benjamini_hochberg,
     bh_survivor_counts,
+    circular_shift_null,
     column_midranks,
     mannwhitney_screen,
     p_from_u,
@@ -138,3 +139,24 @@ def test_screen_rejects_missing_values() -> None:
     X.iloc[0, 0] = np.nan
     with pytest.raises(ValueError, match="missing values"):
         mannwhitney_screen(X, y)
+
+
+def test_circular_shift_null_matches_the_reference_screen_shift_by_shift() -> None:
+    """Each null count is the survivor count of the readable screen on np.roll(y, k).
+
+    Uses labels and features that both trend, so the counts vary across shifts and the
+    comparison is not a string of zeros.
+    """
+    rng = np.random.default_rng(21)
+    n = 240
+    y = (rng.random(n) < np.where(np.arange(n) < n // 4, 0.3, 0.05)).astype(int)
+    X = pd.DataFrame(
+        np.cumsum(rng.normal(size=(n, 30)), axis=0), columns=[f"w{j:02d}" for j in range(30)]
+    )
+    null = circular_shift_null(X, y, observed_count=mannwhitney_screen(X, y).n_survivors)
+
+    assert null.n_permutations == n - 1 and len(null.null_counts) == n - 1
+    assert null.seed is None
+    assert len(set(null.null_counts.tolist())) > 3
+    for k in (1, 17, 60, 120, 181, n - 1):
+        assert null.null_counts[k - 1] == mannwhitney_screen(X, np.roll(y, k)).n_survivors

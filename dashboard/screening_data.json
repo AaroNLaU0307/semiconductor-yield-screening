@@ -13,6 +13,17 @@
     "observed": 32.0,
     "permutation_p_value": 0.0004997501249375312
   },
+  "permutation_time_order": {
+    "method": "circular shift of the time ordered train labels, post-hoc",
+    "n_shifts": 1095,
+    "null_mean": 7.585388127853881,
+    "null_median": 5.0,
+    "null_p95": 27.0,
+    "null_max": 53.0,
+    "null_zero_share": 0.27488584474885847,
+    "observed": 32.0,
+    "permutation_p_value": 0.03193430656934307
+  },
   "null_counts": [
     0,
     0,

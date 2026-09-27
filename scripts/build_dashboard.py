@@ -63,7 +63,8 @@ CAPTION_TIMELINE = "Weekly failure rate, with the chronological split marked. Co
 # The drift clause is counted from spc_data.json by spc_caption(), not asserted.
 CAPTION_SPC = "I chart for one shortlisted sensor. Control limits are computed on the train partition and applied unchanged to holdout. Red points break at least one applied Nelson rule. Conclude: out of control points are common on both sides of the boundary and {drift}, but they do not coincide with failures, see reports/spc.md."
 
-CAPTION_TABLE = "The features that cleared Benjamini-Hochberg at q = 0.10, ranked by effect size. Conclude: several sensors are associated with failure during the train period, and the permutation null rules out chance as the explanation. These are associations, not causes, and nothing here shows that changing a sensor would change yield."
+# The null clause is filled from screening_data.json by table_caption(), not asserted.
+CAPTION_TABLE = "The features that cleared Benjamini-Hochberg at q = 0.10, ranked by effect size. Conclude: several sensors are associated with failure during the train period, and {null}. These are associations, not causes, and nothing here shows that changing a sensor would change yield."
 
 CAPTION_PR = "Precision-recall on the holdout for the declared primary model. The dashed line is no skill, at the holdout failure rate. Conclude: the curve sits essentially on the no skill line, so the model does not usefully rank held out lots, and the marked operating point catches very few failures."
 
@@ -583,6 +584,7 @@ def build_summary_html(screening: dict[str, Any], model: dict[str, Any]) -> str:
     n_tested = screening["n_tested"]
     n_survivors = screening["n_survivors"]
     permutation_p = screening["permutation"]["permutation_p_value"]
+    time_order_p = screening["permutation_time_order"]["permutation_p_value"]
 
     primary = find_primary_metric(model["metrics"])
     pr_auc = primary["pr_auc"]
@@ -592,7 +594,8 @@ def build_summary_html(screening: dict[str, Any], model: dict[str, Any]) -> str:
     stats = [
         (str(n_tested), "features tested"),
         (str(n_survivors), "features surviving FDR control"),
-        (format_p(permutation_p), "permutation p value"),
+        (format_p(permutation_p), "permutation p value (declared null, labels shuffled freely)"),
+        (format_p(time_order_p), "p value with labels kept in time order (post-hoc)"),
         (
             fmt4(pr_auc),
             f"holdout PR-AUC (95 percent interval {fmt4(ci_low)} to {fmt4(ci_high)})",
@@ -605,6 +608,26 @@ def build_summary_html(screening: dict[str, Any], model: dict[str, Any]) -> str:
         for value, label in stats
     )
     return f'<div class="summary">\n{cards}\n</div>'
+
+
+def table_caption(screening: dict[str, Any]) -> str:
+    """CAPTION_TABLE with its null clause read from both permutation nulls."""
+    declared = screening["permutation"]["permutation_p_value"]
+    time_order = screening["permutation_time_order"]["permutation_p_value"]
+    if time_order <= 0.05:
+        null = (
+            f"the declared permutation null (p = {format_p(declared)}) and a post-hoc null "
+            f"that keeps the labels in time order (p = {format_p(time_order)}) both make "
+            "chance an unlikely explanation for the count, the second by a much narrower "
+            "margin"
+        )
+    else:
+        null = (
+            f"the declared permutation null gives p = {format_p(declared)}, but once the "
+            f"labels are kept in time order p = {format_p(time_order)}, so chance is not "
+            "ruled out"
+        )
+    return CAPTION_TABLE.format(null=null)
 
 
 def spc_caption(spc: dict[str, Any]) -> str:
@@ -664,7 +687,7 @@ def build_page(
         build_summary_html(screening, model),
         render_panel("Weekly failure rate over time", timeline_div, CAPTION_TIMELINE),
         render_panel("SPC individuals chart by sensor", spc_div, spc_caption(spc)),
-        render_panel("Ranked detractors surviving FDR control", build_table_html(screening), CAPTION_TABLE),
+        render_panel("Ranked detractors surviving FDR control", build_table_html(screening), table_caption(screening)),
         render_panel("Precision-recall on holdout", pr_div, CAPTION_PR),
     ]
     return HTML_HEAD + "\n".join(parts) + HTML_FOOT

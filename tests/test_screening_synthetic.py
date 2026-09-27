@@ -21,6 +21,8 @@ Four groups of tests live here:
 4. Fallback labelling (DECISIONS.md D7): when BH clears fewer than
    FALLBACK_TRIGGER_BELOW features, the top FALLBACK_TOP_K by effect size are
    carried forward and labelled as such, and BH survivors are labelled as such too.
+5. The time order preserving null: when labels and features share only a trend in
+   time, the free shuffle is fooled and the circular shift null is mostly not.
 """
 
 from __future__ import annotations
@@ -36,7 +38,11 @@ from yield_screening.config import (
     FDR_Q,
     SURVIVOR_LABEL,
 )
-from yield_screening.screening import mannwhitney_screen, permutation_null
+from yield_screening.screening import (
+    circular_shift_null,
+    mannwhitney_screen,
+    permutation_null,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -324,3 +330,45 @@ def test_survivors_are_labelled_as_cleared_fdr() -> None:
     table = result.table.set_index("feature")
 
     assert table.loc["planted", "status"] == SURVIVOR_LABEL
+
+
+# ---------------------------------------------------------------------------
+# Group 5: the time order preserving null (post-hoc sensitivity, 2026-09-27)
+# ---------------------------------------------------------------------------
+
+SHARED_TREND_SEEDS: list[int] = list(range(10))
+
+
+def make_shared_trend(seed: int, n: int = 400, p: int = 40) -> tuple[pd.DataFrame, np.ndarray]:
+    """Labels and features that both move with time and are otherwise independent.
+
+    Failures are five times as common in the first quarter of the record as after
+    it, which mimics the failure rate drift in DECISIONS.md D0, and every feature is
+    an independent random walk. No feature has anything to do with the label, but any
+    walk that happens to sit higher early on looks associated with failure.
+    """
+    rng = np.random.default_rng(seed)
+    y = (rng.random(n) < np.where(np.arange(n) < n // 4, 0.25, 0.05)).astype(int)
+    X = np.cumsum(rng.normal(size=(n, p)), axis=0)
+    return pd.DataFrame(X, columns=[f"walk_{j:02d}" for j in range(p)]), y
+
+
+def test_time_order_null_is_not_fooled_by_a_shared_trend() -> None:
+    """When labels and features only share a time trend, the free shuffle declares a
+    discovery on every seed, and the circular shift null mostly does not.
+
+    This is the reason the sensitivity exists: the free shuffle breaks the trend in
+    the labels, so it cannot reproduce the spurious survivors a shared trend creates.
+    """
+    iid_p, shift_p = [], []
+    for seed in SHARED_TREND_SEEDS:
+        X, y = make_shared_trend(seed)
+        observed = mannwhitney_screen(X, y).n_survivors
+        iid = permutation_null(X, y, observed_count=observed, n_permutations=500, seed=1)
+        shift = circular_shift_null(X, y, observed_count=observed)
+        assert shift.summary()["null_mean"] > iid.summary()["null_mean"]
+        iid_p.append(iid.p_value)
+        shift_p.append(shift.p_value)
+
+    assert max(iid_p) <= 0.01
+    assert sum(p > 0.05 for p in shift_p) >= 7

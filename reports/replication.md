@@ -4,7 +4,7 @@
 
 ## 1. The question
 
-The screen found 32 features associated with failure in the train period, and the permutation null said that count was not chance (p = 0.0005). The model built on those features then failed to beat no skill on the holdout. Both statements are correct, and this page reconciles them.
+The screen found 32 features associated with failure in the train period, and the permutation null said that count was not chance (p = 0.0005; p = 0.0319 under the post-hoc null that keeps the labels in time order, `reports/screening.md` section 4). The model built on those features then failed to beat no skill on the holdout. Both statements are correct, and this page reconciles them.
 
 ## 2. The associations mostly do not reappear
 
