@@ -353,6 +353,7 @@ the warehouse is built.
 | `dashboard/` | self contained HTML dashboard and its data |
 | `docs/` | figures embedded above, generated from the pipeline's own output, and the dated addendum to DECISIONS.md |
 | `tests/` | test suite |
+| `results/headline.json` | the headline in machine readable form, checked against its artifacts by `tests/test_headline.py` |
 
 ## Tests
 
@@ -369,6 +370,13 @@ readable reference path, because a permutation null computed from a subtly diffe
 statistic than the observation looks rigorous and is worthless. A sixth asserts the SQL
 layer changed no answer: same drop verdict, same drop reason, and bit identical
 statistics against the pandas implementation, sensor by sensor.
+
+Three further files were added on 2026-09-27. `tests/test_report_claims.py` checks that
+sentences in the generated reports which assert a result agree with the tables they
+summarise. `tests/test_stats_provenance.py` pins the sha256 of the source of every
+statistics helper, so an edit to one cannot pass silently. `tests/test_headline.py`
+checks `results/headline.json` against the artifacts it cites and recomputes its
+p-value from the raw data.
 
 On pure noise across 100 fixed seeds, the screen produced at least one survivor in 4
 percent of runs, against a theoretical BH bound of 10 percent.

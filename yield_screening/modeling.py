@@ -9,6 +9,12 @@ Two properties of this module carry the honesty of the reported numbers:
    run on all of train rather than nested inside each fold, so the out of fold PR-AUC
    is optimistic. It is used for selection only. The holdout number is the one that
    pays for the screen in full.
+
+Provenance of the statistics helper here: `bootstrap_pr_auc` was written in this
+repository, not vendored. It is a stratified iid percentile bootstrap of average
+precision, 2000 resamples, 2.5 and 97.5 percentiles, seed 20080719 (DECISIONS.md D10,
+D13). `tests/test_stats_provenance.py` pins the sha256 of its source; editing it means
+updating that hash in the same commit.
 """
 
 from __future__ import annotations

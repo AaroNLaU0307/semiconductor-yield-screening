@@ -16,6 +16,23 @@ different statistic than the observed value looks rigorous and is worthless, so
 the Gate 1 freeze: the same screen rerun on every circular shift of the time ordered
 labels, a null that keeps the clustering of failures in time that a free shuffle
 destroys. The declared null in D6 remains the primary result.
+
+Provenance. Every helper here was written in this repository; none is vendored.
+- Benjamini-Hochberg (`benjamini_hochberg`, `bh_survivor_counts`): step-up over one
+  family, default level q = 0.10 (`config.FDR_Q`, DECISIONS.md D5), checked against
+  statsmodels `fdr_bh` in `tests/test_screening_math.py`.
+- Mann-Whitney U (`column_midranks`, `tie_terms`, `u_sigma`, `u_from_rank_sums`,
+  `p_from_u`, `rank_biserial`): tie corrected normal approximation without continuity
+  correction, checked against scipy `mannwhitneyu(method="asymptotic",
+  use_continuity=False)`.
+- Intervals (`bootstrap_rank_biserial`): stratified iid percentile bootstrap, 2000
+  resamples, 2.5 and 97.5 percentiles, seed 20080719 (D10, D13).
+- Permutation nulls: `permutation_null`, iid label permutations, B = 2000, seed
+  20080719 (D6); `circular_shift_null`, every non-zero circular shift (post-hoc).
+  Both report p = (1 + #{null >= observed}) / (1 + B).
+`tests/test_stats_provenance.py` pins the sha256 of each helper's source. Editing a
+helper means updating its pinned hash in the same commit, which makes the change
+visible in review rather than silent.
 """
 
 from __future__ import annotations
