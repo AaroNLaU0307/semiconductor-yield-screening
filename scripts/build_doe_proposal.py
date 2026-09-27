@@ -6,6 +6,12 @@ establish that a sensor causes yield loss. The only way to get a causal answer i
 set the factors deliberately and randomise, which is what this document specifies and
 what this project did not do.
 
+The factors are the shortlisted sensor values that replicated on the holdout period
+(`dashboard/replication_data.json`, written by the post-hoc replication analysis in
+`scripts/run_pipeline.py`), not the largest train-period effects: those did not hold
+up when the period changed, so an experiment on them would test associations the
+project's own holdout already fails to support.
+
 The run counts below are computed, not asserted. The point of the calculation is that
 it is expensive: it tells a reader what the observational shortcut is actually
 standing in for.
@@ -16,6 +22,7 @@ Usage, from the repository root:
 
 from __future__ import annotations
 
+import json
 import sys
 from pathlib import Path
 
@@ -26,12 +33,14 @@ from scipy import stats
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT))
 
+from yield_screening.config import FDR_Q, INDICATOR_SUFFIX
 from yield_screening.reporting import kv_table, md_table  # noqa: E402
 
 REPORT = REPO_ROOT / "reports" / "doe_proposal.md"
 SCREEN_TABLE = REPO_ROOT / "reports" / "screening_table.csv"
+REPLICATION = REPO_ROOT / "dashboard" / "replication_data.json"
 
-N_FACTORS = 3
+NUMBER_WORDS = ("no", "one", "two", "three", "four", "five", "six", "seven", "eight")
 ALPHA = 0.05
 POWER = 0.80
 BASELINE_FAIL_RATE = 0.0664
@@ -76,26 +85,96 @@ def power_table(baseline: float) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-def main() -> int:
-    if not SCREEN_TABLE.exists():
-        raise SystemExit(
-            "reports/screening_table.csv is missing, run scripts/run_pipeline.py first"
+def words(n: int) -> str:
+    return NUMBER_WORDS[n] if n < len(NUMBER_WORDS) else str(n)
+
+
+def select_factors(replication: dict) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """(factors, passed_over) from the replication analysis.
+
+    Factors are the shortlisted sensor values that replicated on the holdout under BH,
+    ordered by holdout adjusted p. Missingness indicators are excluded, since they
+    describe metrology routing rather than a settable process parameter.
+    `passed_over` lists the sensor values that rank above every factor by train
+    effect size and did not replicate: the ones a train-only ranking would pick first.
+    """
+    features = pd.DataFrame(replication["features"])
+    sensors = features[~features["feature"].str.endswith(INDICATOR_SUFFIX)].copy()
+    sensors["abs train effect"] = sensors["train effect"].abs()
+    factors = sensors[sensors["replicates"]].sort_values("holdout BH adjusted p", kind="stable")
+    if factors.empty:
+        return factors, sensors.iloc[0:0]
+    passed_over = sensors[
+        ~sensors["replicates"]
+        & (sensors["abs train effect"] > factors["abs train effect"].max())
+    ].sort_values("abs train effect", ascending=False, kind="stable")
+    return factors, passed_over
+
+
+def design_note(n_factors: int) -> str:
+    """Why a full factorial, stated for the number of factors actually proposed."""
+    if n_factors == 1:
+        return (
+            "With a single factor the design is a two arm comparison, randomised within "
+            "each day.\n"
         )
-    screen = pd.read_csv(SCREEN_TABLE)
-    survivors = screen[screen["survives_fdr"]].copy()
-    sensors = survivors[~survivors["feature"].str.contains("__notmeasured")]
-    top = sensors.sort_values("abs_effect_size", ascending=False).head(N_FACTORS)
+    if n_factors == 2:
+        return (
+            "A full factorial: with two factors it has four corners, and a half "
+            "fraction would confound the two main effects with each other. The full "
+            "design also estimates their interaction.\n"
+        )
+    half = 2 ** (n_factors - 1)
+    return (
+        f"A full factorial rather than a fractional design: with only {words(n_factors)} "
+        f"factors the full design costs {2**n_factors} corners rather than {half}, and it "
+        "buys clean two factor interactions. Interactions are the plausible mechanism "
+        "here, since these sensors sit on correlated process steps, so aliasing them "
+        f"away to save {half} corners would be a poor trade.\n"
+    )
+
+
+def main() -> int:
+    for path, script in ((SCREEN_TABLE, "run_pipeline.py"), (REPLICATION, "run_pipeline.py")):
+        if not path.exists():
+            raise SystemExit(
+                f"{path.relative_to(REPO_ROOT)} is missing, run scripts/{script} first"
+            )
+    replication = json.loads(REPLICATION.read_text(encoding="utf-8"))
+    factors, passed_over = select_factors(replication)
+    n_factors = len(factors)
+    if n_factors == 0:
+        raise SystemExit(
+            "no shortlisted sensor value replicated on the holdout, so there is no "
+            "candidate to design an experiment around"
+        )
+    n_shortlisted = int(replication["summary"]["n_shortlisted"])
 
     factor_table = pd.DataFrame(
         {
-            "factor": [f"F{i + 1}" for i in range(len(top))],
-            "sensor": top["feature"].to_list(),
-            "screen effect size": top["effect_size_rank_biserial"].round(4).to_list(),
-            "BH adjusted p": top["p_bh_adjusted"].to_list(),
+            "factor": [f"F{i + 1}" for i in range(n_factors)],
+            "sensor": factors["feature"].to_list(),
+            "train effect": factors["train effect"].round(4).to_list(),
+            "holdout effect": factors["holdout effect"].round(4).to_list(),
+            "holdout BH adjusted p": factors["holdout BH adjusted p"].to_list(),
             "low level": "train 25th percentile",
             "high level": "train 75th percentile",
         }
     )
+    if len(passed_over):
+        listed = ", ".join(
+            f"{row['feature']} (train {row['train effect']:+.2f}, holdout "
+            f"{row['holdout effect']:+.2f})"
+            for _, row in passed_over.iterrows()
+        )
+        passed_over_text = (
+            "\nRanking by train-period effect size alone would put "
+            f"{words(len(passed_over))} other sensor values ahead of these: {listed}. "
+            "None of them replicated (`reports/replication.md`), so an experiment on "
+            "them would test associations that did not hold up when the period changed.\n"
+        )
+    else:
+        passed_over_text = ""
 
     runs = power_table(BASELINE_FAIL_RATE)
     headline = runs.iloc[0]
@@ -116,10 +195,14 @@ def main() -> int:
         "such as tool age or product mix. Randomised assignment is what breaks that "
         "tie, because it makes the factor independent of everything not measured.\n",
         "## 2. Factors\n",
-        "The three shortlisted sensor values with the largest absolute effect size "
-        "from the screen. Missingness indicators are excluded, since they describe "
-        "metrology routing rather than a settable process parameter.\n",
+        f"The {words(n_factors)} shortlisted sensor values that replicated on the "
+        f"holdout period, under BH at q = {FDR_Q:.2f} over the family of {n_shortlisted} "
+        "shortlisted features (`reports/replication.md`). Missingness indicators are "
+        "excluded, since they describe metrology routing rather than a settable process "
+        "parameter. The replication analysis is post-hoc, so this choice is too: the "
+        "experiment is the test on fresh data that those features still need.\n",
         md_table(factor_table),
+        passed_over_text,
         "\nLevels are set at the train 25th and 75th percentiles rather than at "
         "extremes. Extreme levels would raise the power of the design but would run "
         "the process outside its normal operating window, which risks scrapping "
@@ -127,10 +210,13 @@ def main() -> int:
         "\n## 3. Design\n",
         kv_table(
             [
-                ("design", f"2^{N_FACTORS} full factorial"),
-                ("factors", N_FACTORS),
+                (
+                    "design",
+                    f"2^{n_factors} full factorial" if n_factors > 1 else "two arm comparison",
+                ),
+                ("factors", n_factors),
                 ("levels per factor", 2),
-                ("distinct corners", 2**N_FACTORS),
+                ("distinct corners", 2**n_factors),
                 ("randomisation", "run order randomised within each day"),
                 (
                     "blocking",
@@ -143,11 +229,7 @@ def main() -> int:
                 ("target power", POWER),
             ]
         ),
-        "\nA full factorial rather than a fractional design: with only three factors "
-        "the full design costs eight corners rather than four, and it buys clean "
-        "two factor interactions. Interactions are the plausible mechanism here, "
-        "since these sensors sit on correlated process steps, so aliasing them away "
-        "to save four corners would be a poor trade.\n",
+        "\n" + design_note(n_factors),
         "\n## 4. Run count, and why this is the important section\n",
         "The response is binary and the baseline failure rate is low, which makes "
         "this expensive. Sample size per level is computed from a two sided two "
@@ -166,15 +248,16 @@ def main() -> int:
         "rather than against it. First, the screen is worth running precisely "
         "because it narrows 590 sensors to a handful, and it is far cheaper to buy "
         f"{int(headline['total lots in the design'])} lots of evidence about "
-        f"{N_FACTORS} candidates than to attempt anything comparable across 590. "
+        f"{n_factors} candidates than to attempt anything comparable across 590. "
         "Second, the run "
         "counts above assume the effect is real and of the stated size; the "
         "holdout result in `reports/model.md` gives no reason to be confident of "
         "that, so a smaller pilot to confirm the effect exists at all should come "
         "before committing to the full design.\n",
         "\n## 5. What this design would and would not establish\n",
-        "It would establish whether deliberately setting these three parameters "
-        "changes the failure rate, within the operating window tested, on the tool "
+        "It would establish whether deliberately setting "
+        + ("this parameter" if n_factors == 1 else f"these {words(n_factors)} parameters")
+        + " changes the failure rate, within the operating window tested, on the tool "
         "and product mix used, during the period it runs.\n",
         "\nIt would not establish a mechanism, would not extrapolate outside the "
         "tested window, and would not transfer automatically to another tool or "
@@ -186,7 +269,7 @@ def main() -> int:
     REPORT.write_text("\n".join(parts), encoding="utf-8")
     print(f"wrote {REPORT.relative_to(REPO_ROOT)}")
     print(
-        f"top {N_FACTORS} factors: {', '.join(top['feature'])}; "
+        f"{n_factors} factors: {', '.join(factors['feature'])}; "
         f"halving the failure rate needs {int(headline['total lots in the design'])} lots"
     )
     return 0

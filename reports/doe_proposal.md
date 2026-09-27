@@ -8,13 +8,15 @@ Every result in this repository comes from observational records of a running pr
 
 ## 2. Factors
 
-The three shortlisted sensor values with the largest absolute effect size from the screen. Missingness indicators are excluded, since they describe metrology routing rather than a settable process parameter.
+The two shortlisted sensor values that replicated on the holdout period, under BH at q = 0.10 over the family of 32 shortlisted features (`reports/replication.md`). Missingness indicators are excluded, since they describe metrology routing rather than a settable process parameter. The replication analysis is post-hoc, so this choice is too: the experiment is the test on fresh data that those features still need.
 
-| factor | sensor | screen effect size | BH adjusted p | low level | high level |
-| --- | --- | --- | --- | --- | --- |
-| F1 | sensor_059 | 0.5125 | 0.0000 | train 25th percentile | train 75th percentile |
-| F2 | sensor_477 | 0.3054 | 0.0011 | train 25th percentile | train 75th percentile |
-| F3 | sensor_205 | 0.3031 | 0.0011 | train 25th percentile | train 75th percentile |
+| factor | sensor | train effect | holdout effect | holdout BH adjusted p | low level | high level |
+| --- | --- | --- | --- | --- | --- | --- |
+| F1 | sensor_103 | 0.2938 | 0.4297 | 0.0073 | train 25th percentile | train 75th percentile |
+| F2 | sensor_510 | 0.2402 | 0.3388 | 0.0587 | train 25th percentile | train 75th percentile |
+
+Ranking by train-period effect size alone would put three other sensor values ahead of these: sensor_059 (train +0.51, holdout -0.05), sensor_477 (train +0.31, holdout +0.03), sensor_205 (train +0.30, holdout +0.02). None of them replicated (`reports/replication.md`), so an experiment on them would test associations that did not hold up when the period changed.
+
 
 Levels are set at the train 25th and 75th percentiles rather than at extremes. Extreme levels would raise the power of the design but would run the process outside its normal operating window, which risks scrapping material and answers a question about a process nobody runs.
 
@@ -23,10 +25,10 @@ Levels are set at the train 25th and 75th percentiles rather than at extremes. E
 
 | property | value |
 | --- | --- |
-| design | 2^3 full factorial |
-| factors | 3 |
+| design | 2^2 full factorial |
+| factors | 2 |
 | levels per factor | 2 |
-| distinct corners | 8 |
+| distinct corners | 4 |
 | randomisation | run order randomised within each day |
 | blocking | block by day, since the drift measured in DECISIONS.md D0 is large enough to swamp the effect being tested |
 | response | lot pass or fail, binary |
@@ -34,7 +36,7 @@ Levels are set at the train 25th and 75th percentiles rather than at extremes. E
 | significance level | 0.0500 |
 | target power | 0.8000 |
 
-A full factorial rather than a fractional design: with only three factors the full design costs eight corners rather than four, and it buys clean two factor interactions. Interactions are the plausible mechanism here, since these sensors sit on correlated process steps, so aliasing them away to save four corners would be a poor trade.
+A full factorial: with two factors it has four corners, and a half fraction would confound the two main effects with each other. The full design also estimates their interaction.
 
 
 ## 4. Run count, and why this is the important section
@@ -52,12 +54,12 @@ The response is binary and the baseline failure rate is low, which makes this ex
 **Detecting a halving of the failure rate needs about 1346 lots.** That is the honest headline of this proposal. It is a large number, and it is the real reason observational screening studies like this one exist: the experiment that would answer the question properly costs more than most fabs will spend on a hypothesis that is still just a ranking.
 
 
-Two consequences follow, and both are arguments for using the screen rather than against it. First, the screen is worth running precisely because it narrows 590 sensors to a handful, and it is far cheaper to buy 1346 lots of evidence about 3 candidates than to attempt anything comparable across 590. Second, the run counts above assume the effect is real and of the stated size; the holdout result in `reports/model.md` gives no reason to be confident of that, so a smaller pilot to confirm the effect exists at all should come before committing to the full design.
+Two consequences follow, and both are arguments for using the screen rather than against it. First, the screen is worth running precisely because it narrows 590 sensors to a handful, and it is far cheaper to buy 1346 lots of evidence about 2 candidates than to attempt anything comparable across 590. Second, the run counts above assume the effect is real and of the stated size; the holdout result in `reports/model.md` gives no reason to be confident of that, so a smaller pilot to confirm the effect exists at all should come before committing to the full design.
 
 
 ## 5. What this design would and would not establish
 
-It would establish whether deliberately setting these three parameters changes the failure rate, within the operating window tested, on the tool and product mix used, during the period it runs.
+It would establish whether deliberately setting these two parameters changes the failure rate, within the operating window tested, on the tool and product mix used, during the period it runs.
 
 
 It would not establish a mechanism, would not extrapolate outside the tested window, and would not transfer automatically to another tool or another product. It also would not rescue any sensor that this repository shortlisted for the wrong reason: if a shortlisted sensor is a proxy, the experiment will correctly find that setting it changes nothing, which is a useful and cheap way to be wrong.

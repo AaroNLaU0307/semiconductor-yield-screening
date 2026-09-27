@@ -59,7 +59,7 @@ which is why the correction is applied rather than raw p-values quoted.
 sensors measured on 99.9 percent of train lots and 99.8 percent of holdout lots, so
 neither is drawn from a sampled subpopulation. More decisively, the association survives
 holding each failure associated sampling plan fixed: recomputed within every stratum of
-both plans, all eight strata keep the same sign (+0.22 to +0.57 for `sensor_103`, +0.29
+both plans, all eight strata keep the same sign (+0.22 to +0.53 for `sensor_103`, +0.29
 to +0.56 for `sensor_510`). Sampling bias is excluded as the explanation, not merely
 argued to be inapplicable.
 
@@ -231,8 +231,9 @@ sampling rule shows up in the data as a block of sensors that are all absent tog
 The drift in `sensor_059` has the shape a **tool drift or a chamber change** would
 produce: a level that moves steadily across months rather than jumping with a lot.
 Distinguishing that from a real yield relationship is not possible from observational
-records, which is exactly what [reports/doe_proposal.md](reports/doe_proposal.md) exists
-to specify.
+records. It takes a designed experiment, and
+[reports/doe_proposal.md](reports/doe_proposal.md) specifies one for the two sensors
+that did replicate, `sensor_103` and `sensor_510`.
 
 ## Dashboard
 
@@ -296,10 +297,13 @@ ranking here is a ranking of association. A shortlisted sensor may matter, may p
 something that matters, or may simply move with tool age or product mix.
 
 [reports/doe_proposal.md](reports/doe_proposal.md) specifies the designed experiment
-that would settle it, and computes its cost: detecting a halving of the failure rate
-would need roughly **1346 lots**. That number is the honest reason observational
-screening studies exist, and it is also the reason the screen is worth running, since
-buying that evidence for 3 candidates is tractable and buying it for 590 is not.
+that would settle it for the two sensors that replicated, `sensor_103` and `sensor_510`,
+and computes its cost: detecting a halving of the failure rate would need roughly **1346
+lots**. That number is the honest reason observational screening studies exist, and it
+is also the reason the screen is worth running, since buying that evidence for 2
+candidates is tractable and buying it for 590 is not. The factors are chosen from the
+post-hoc replication, so the experiment is also the test on a fresh period that finding
+2 says they still need.
 
 Nor does a weak result here establish that no detractors exist. It establishes that none
 is detectable across this time boundary, at this sample size, at this effect size,
@@ -329,14 +333,14 @@ the warehouse is built.
 
 | path | contents |
 | --- | --- |
-| [DECISIONS.md](DECISIONS.md) | every frozen methodological choice with reasons, plus an adversarial self review |
+| [DECISIONS.md](DECISIONS.md) | every frozen methodological choice with reasons, plus an adversarial self review; dated corrections are in [docs/ADDENDUM_2026-09-27.md](docs/ADDENDUM_2026-09-27.md) |
 | [PLAN.md](PLAN.md) | phase plan, module layout, test schedule |
 | [`sql/`](sql/) | warehouse schema and the extraction, filtering and aggregation queries |
 | `yield_screening/` | library code |
 | `scripts/` | entry points |
 | `reports/` | generated reports |
 | `dashboard/` | self contained HTML dashboard and its data |
-| `docs/` | figures embedded above, generated from the pipeline's own output |
+| `docs/` | figures embedded above, generated from the pipeline's own output, and the dated addendum to DECISIONS.md |
 | `tests/` | test suite |
 
 ## Tests

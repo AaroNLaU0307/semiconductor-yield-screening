@@ -481,6 +481,56 @@ def contingency_sweep(
     return frame
 
 
+def ooc_drift_paragraph(per_sensor: pd.DataFrame) -> str:
+    """Section 6 of reports/spc.md, computed from the section 2 table.
+
+    Counts the charted sensors whose holdout out of control rate exceeds the train
+    rate, names every exception, and draws the drift reading only if most sensors
+    moved, so the prose cannot claim more than the table it summarises shows.
+    """
+    train = per_sensor["train OOC rate"]
+    holdout = per_sensor["holdout OOC rate"]
+    n_sensors = len(per_sensor)
+    higher = holdout > train
+    n_higher = int(higher.sum())
+    n_doubled = int((holdout >= 2 * train).sum())
+
+    if n_higher == n_sensors:
+        scope = "for every charted sensor"
+    else:
+        scope = f"for {n_higher} of the {n_sensors} charted sensors"
+    doubled = f", {n_doubled} of them by a factor of two or more" if n_doubled else ""
+    exceptions = [
+        f"{row['sensor']} ({row['train OOC rate']:.4f} on train, "
+        f"{row['holdout OOC rate']:.4f} on holdout)"
+        for _, row in per_sensor.loc[~higher].iterrows()
+    ]
+    if not exceptions:
+        exception_text = ""
+    elif len(exceptions) == 1:
+        exception_text = f"; the exception is {exceptions[0]}"
+    else:
+        exception_text = f"; the exceptions are {', '.join(exceptions)}"
+    lead = (
+        f"The holdout out of control rate in section 2 is higher than the train rate "
+        f"{scope}{doubled}{exception_text}."
+    )
+
+    if n_higher * 2 <= n_sensors:
+        return (
+            f"{lead} That is not a consistent shift: the charts give no clear sign that "
+            "the holdout period sits further from the train centre lines than the "
+            "train period did.\n"
+        )
+    return (
+        f"{lead} The limits are estimated on train and applied unchanged, so this says "
+        "the holdout period genuinely sits further from the train centre lines than "
+        "the train period did. That is consistent with the failure rate "
+        "non-stationarity recorded in DECISIONS.md D0, and for a process engineer it "
+        "is the more useful signal here than the contingency test: the process moved.\n"
+    )
+
+
 def write_spc_report(sensors, per_sensor, contingency, sweep, y_holdout) -> None:
     ci_low, ci_high = contingency.risk_ratio_ci
     ci_text = (
@@ -666,13 +716,7 @@ def write_spc_report(sensors, per_sensor, contingency, sweep, y_holdout) -> None
         "so a reader can see the entire surface, including the parts that do not "
         "support a positive finding.\n",
         "\n## 6. Process drift, a separate observation\n",
-        "The holdout out of control rate in section 2 is higher than the train rate "
-        "for every charted sensor, several by a factor of two or more. The limits are "
-        "estimated on train and applied unchanged, so this says the holdout period "
-        "genuinely sits further from the train centre lines than the train period did. "
-        "That is consistent with the failure rate non-stationarity recorded in "
-        "DECISIONS.md D0, and for a process engineer it is the more useful signal "
-        "here than the contingency test: the process moved.\n",
+        ooc_drift_paragraph(per_sensor),
         "\n## 7. Reading this correctly\n",
         "An out of control signal says a sensor moved relative to its own train "
         "behaviour. It does not say that movement caused a failure, and it does not "

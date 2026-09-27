@@ -60,7 +60,8 @@ COLOR_BOUNDARY = "#444444"
 # Caption text is reproduced verbatim, character for character, as specified.
 CAPTION_TIMELINE = "Weekly failure rate, with the chronological split marked. Conclude: the failure rate is not stable, falling from about 22 percent in July to under 3 percent in September, which is why the split is chronological and why associations learned before the boundary need not hold after it."
 
-CAPTION_SPC = "I chart for one shortlisted sensor. Control limits are computed on the train partition and applied unchanged to holdout. Red points break at least one applied Nelson rule. Conclude: out of control points are common on both sides of the boundary and more common after it, which is process drift, but they do not coincide with failures, see reports/spc.md."
+# The drift clause is counted from spc_data.json by spc_caption(), not asserted.
+CAPTION_SPC = "I chart for one shortlisted sensor. Control limits are computed on the train partition and applied unchanged to holdout. Red points break at least one applied Nelson rule. Conclude: out of control points are common on both sides of the boundary and {drift}, but they do not coincide with failures, see reports/spc.md."
 
 CAPTION_TABLE = "The features that cleared Benjamini-Hochberg at q = 0.10, ranked by effect size. Conclude: several sensors are associated with failure during the train period, and the permutation null rules out chance as the explanation. These are associations, not causes, and nothing here shows that changing a sensor would change yield."
 
@@ -606,6 +607,34 @@ def build_summary_html(screening: dict[str, Any], model: dict[str, Any]) -> str:
     return f'<div class="summary">\n{cards}\n</div>'
 
 
+def spc_caption(spc: dict[str, Any]) -> str:
+    """CAPTION_SPC with its drift clause counted from the chart data.
+
+    The holdout out of control rate is higher than the train rate for most charted
+    sensors but not necessarily all, so the clause states the count it can support.
+    """
+    sensors: list[str] = spc["sensors"]
+    n_higher = 0
+    for sensor in sensors:
+        chart = spc["charts"][sensor]
+        train_rate = sum(chart["train_ooc"]) / len(chart["train_ooc"])
+        holdout_rate = sum(chart["holdout_ooc"]) / len(chart["holdout_ooc"])
+        n_higher += holdout_rate > train_rate
+    if n_higher == len(sensors):
+        drift = "more common after it for every charted sensor, which is process drift"
+    elif n_higher * 2 > len(sensors):
+        drift = (
+            f"more common after it for {n_higher} of the {len(sensors)} charted sensors, "
+            "which is process drift"
+        )
+    else:
+        drift = (
+            f"more common after it for only {n_higher} of the {len(sensors)} charted "
+            "sensors, so they show no consistent drift"
+        )
+    return CAPTION_SPC.format(drift=drift)
+
+
 def render_panel(title: str, body: str, caption: str) -> str:
     return (
         '<section class="panel">\n'
@@ -634,7 +663,7 @@ def build_page(
         "<h1>Semiconductor yield detractor screening</h1>",
         build_summary_html(screening, model),
         render_panel("Weekly failure rate over time", timeline_div, CAPTION_TIMELINE),
-        render_panel("SPC individuals chart by sensor", spc_div, CAPTION_SPC),
+        render_panel("SPC individuals chart by sensor", spc_div, spc_caption(spc)),
         render_panel("Ranked detractors surviving FDR control", build_table_html(screening), CAPTION_TABLE),
         render_panel("Precision-recall on holdout", pr_div, CAPTION_PR),
     ]

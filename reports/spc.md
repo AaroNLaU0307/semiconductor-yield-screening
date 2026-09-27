@@ -120,7 +120,7 @@ No threshold in this sweep is promoted to a headline result. It is shown so a re
 
 ## 6. Process drift, a separate observation
 
-The holdout out of control rate in section 2 is higher than the train rate for every charted sensor, several by a factor of two or more. The limits are estimated on train and applied unchanged, so this says the holdout period genuinely sits further from the train centre lines than the train period did. That is consistent with the failure rate non-stationarity recorded in DECISIONS.md D0, and for a process engineer it is the more useful signal here than the contingency test: the process moved.
+The holdout out of control rate in section 2 is higher than the train rate for 9 of the 10 charted sensors, 5 of them by a factor of two or more; the exception is sensor_103 (0.3878 on train, 0.3715 on holdout). The limits are estimated on train and applied unchanged, so this says the holdout period genuinely sits further from the train centre lines than the train period did. That is consistent with the failure rate non-stationarity recorded in DECISIONS.md D0, and for a process engineer it is the more useful signal here than the contingency test: the process moved.
 
 
 ## 7. Reading this correctly
